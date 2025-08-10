@@ -2,52 +2,52 @@
 
 ## 功能更新：
 
-### 53. [核心功能修复] 重构设置保存逻辑，解决自动保存失效问题
+### 5 `ui/bindings.js`:
+        ```javascript
+        function saveSettings(panel) {
+            // ... (保存逻辑) ...
+            toastr.success('设置已自动保存!', '保存成功'); // 恢复了这一行
+            console.log(`[${extensionName}] 设置已自动保存。`);
+        }
+        ```
+    - `core/api.js`:
+        ```javascript
+        export async function testApiConnection(apiSettings) {
+            const testMessages = [{ role: 'user', content: 'hi' }];
+            const testApiSettings = { /* ... 包含max_tokens等测试参数 ... */ };
+            
+            const result = (testApiSettings.apiMode === 'frontend')
+                ? await callApiViaFrontend(testApiSettings, testMessages)
+                : await callApiViaBackend(testApiSettings, testMessages);
+            
+            if (result !== null && typeof result === 'string') {
+                toastr.success(`测试成功！API返回: "${result}"`, 'API连接正常');
+            } else {
+                toastr.error('测试失败...', 'API连接失败');
+            }
+        }
+        ```
+- **效果**: 插件的用户反馈机制得到了显著改善。自动保存现在有了清晰的确认提示。API测试功能变得更加可靠和实用，能真正反映API的可用性。
+- **后续修复**: 解决了API测试时未正确传递用户当前选择的模型名称，导致API返回“无效模型”错误的问题。通过在 `ui/bindings.js` 的测试按钮点击事件中正确读取并传递模型选择器的值，确保了测试请求的准确性。
 
-- **问题描述**: 插件设置在修改后无法自动保存，导致所有用户配置在刷新后丢失。
-- **根本原因**: `ui/bindings.js` 中采用了基于 `MutationObserver` 监听面板关闭事件的保存机制。该方法严重依赖SillyTavern的特定UI实现，非常脆弱，在当前环境下已完全失效。
+### 51. [体验优化] 实现设置页面关闭时自动保存
+
+- **问题描述**: 用户每次修改设置后，都需要手动点击“保存设置”按钮，操作较为繁琐。
+- **核心需求**: 移除手动保存按钮，改为在用户关闭设置面板（抽屉）时自动保存所有更改。
 - **解决方案**:
-    1.  **废弃旧逻辑**: 完全移除了 `ui/bindings.js` 中基于 `MutationObserver` 的自动保存代码。
-    2.  **采用即时保存策略**: 参照更稳定插件 (`优化/`) 的实现，对 `ui/bindings.js` 进行了彻底重构。
-        -   现在，代码为设置面板中的**每一个**输入控件（复选框、文本框、滑块、下拉菜单等）都绑定了独立的 `change` 或 `input` 事件监听器。
-        -   当用户修改任何一个设置项时，会触发对应的事件，调用 `saveSetting` 函数，将该项的变更**立刻**保存到 `extension_settings` 中。
-    3.  **修复导入错误**: 解决了重构过程中因错误导入 `saveSettingsDebounced` 函数而引发的 `SyntaxError`，确保了脚本的正常运行。
+    1.  **实现自动保存逻辑 (`ui/bindings.js`)**:
+        -   采用 `MutationObserver` 来监听设置面板（`.drawer`）的 `class` 属性变化。这是检测SillyTavern UI组件状态变化的最可靠方法。
+        -   当观察到面板的 `class` 列表不再包含 `active` 时，即判断为关闭事件，此时自动触发 `saveSettings()` 函数。
+    2.  **简化UI (`settings.html`)**:
+        -   移除了底部的“保存设置”按钮。
+        -   在原按钮位置增加了一行提示文字：“所有设置将在关闭此面板时自动保存。”，明确告知用户新的保存机制。
 - **操作代码**:
     - `ui/bindings.js`:
         ```javascript
-        // 剧情优化大师 - UI数据绑定模块
-        // 由Cline参照 '优化/' 插件的健壮性实践重构
-        
-        import { extension_settings } from '/scripts/extensions.js';
-        // ... 其他导入 ...
-
-        function saveSetting(key, value) {
-            // ... 保存单个设置到 extension_settings 的逻辑 ...
-            // (注：不再调用 saveSettingsDebounced)
-        }
-
-        export function initializeBindings() {
-            const panel = $('#qrf_settings_panel');
-            // ...
-            // 为所有类型的输入控件绑定 'change.qrf' 事件
-            panel.on('change.qrf', 'input[type="checkbox"]', function() {
-                const key = toCamelCase(this.id.replace('qrf_', ''));
-                saveSetting(key, this.checked);
-            });
-            
-            panel.on('change.qrf', 'input[type="text"], input[type="password"]', function() {
-                const key = toCamelCase(this.id.replace('qrf_', ''));
-                saveSetting(key, $(this).val());
-            });
-
-            // ... (为 radio, textarea, select, range 等绑定类似事件) ...
-        }
-        ```
-- **效果**: 插件的设置保存功能现在变得极其可靠和健壮。用户的任何修改都会被即时、准确地保存，彻底解决了配置丢失的问题，显著提升了产品的可用性和用户体验。
-
-### 52. [功能与体验] 完善自动保存提示与API测试逻辑
-
-- **问题描述**: 根据最新反馈，自动保存功能需要更明确的成功提示；同时，API测试按钮的功能应为实际发送消息进行测试，而非获取模型列表。
+        const drawer = panel.closest('.drawer');
+        if (drawer.length > 0) {
+            const observer = new MutationObserver(mutations => {
+                mutations.forEach(mutation => {取模型列表。
 - **核心需求**:
     1.  恢复自动保存成功时的 `toastr` 弹窗提示。
     2.  重构API测试功能，使其能模拟一次真实的聊天API调用。
@@ -87,7 +87,7 @@
         }
         ```
 - **效果**: 插件的用户反馈机制得到了显著改善。自动保存现在有了清晰的确认提示。API测试功能变得更加可靠和实用，能真正反映API的可用性。
-- **后续修复**: 解决了API测试时未正确传递用户当前选择的模型名称，导致API返回“无效模型”错误的问题。通过在 `ui/bindings.js` 的测试按钮点击事件中正确读取并传递模型选择器的值，确保了测试请求的准确性。
+- **后续修复**: 解决了API测试时未正确传递用户当前选择的模型名称，导致API返回“无效模型”错误的问题。通过在 `ui/bindings.js` 的测试按钮点击事件中正确读并传递选择器的值，确保了测试请求的准确性。
 
 ### 51. [体验优化] 实现设置页面关闭时自动保存
 
@@ -96,10 +96,10 @@
 - **解决方案**:
     1.  **实现自动保存逻辑 (`ui/bindings.js`)**:
         -   采用 `MutationObserver` 来监听设置面板（`.drawer`）的 `class` 属性变化。这是检测SillyTavern UI组件状态变化的最可靠方法。
-        -   当观察到面板的 `class` 列表不再包含 `active` 时，即判断为关闭事件，此时自动触发 `saveSettings()` 函数。
+        -   当观察到面板的 `class` 不再包含 `active` 时，即判断为关闭事件，此时自动触发 `saveSettings()` 函数。
     2.  **简化UI (`settings.html`)**:
         -   移除了底部的“保存设置”按钮。
-        -   在原按钮位置增加了一行提示文字：“所有设置将在关闭此面板时自动保存。”，明确告知用户新的保存机制。
+        -   在原按钮位置增加了一行提示文字：“所有设置将在关闭此面板时自动保存。”，明确告知用户新的保存机制
 - **操作代码**:
     - `ui/bindings.js`:
         ```javascript

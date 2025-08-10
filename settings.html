@@ -48,11 +48,12 @@
         <div class="qrf_settings_block qrf_model_selector_block">
             <label for="qrf_model">模型名称</label>
             <div class="qrf_model_selector_wrapper">
-                <select id="qrf_model" class="text_pole"></select>
+                <input id="qrf_model" type="text" class="text_pole" placeholder="手动输入或从右侧选择">
+                <select id="qrf_model_select" class="text_pole"></select>
                 <button id="qrf_fetch_models" class="menu_button" title="获取模型列表"><i class="fa-solid fa-cloud-arrow-down"></i></button>
                 <button id="qrf_test_api" class="menu_button" title="测试API连接"><i class="fa-solid fa-plug-circle-check"></i></button>
             </div>
-             <small class="notes">点击下载图标从API获取可用模型列表，点击插头图标测试连接是否成功。</small>
+             <small class="notes">可手动输入模型名称，或点击下载图标从API获取列表后在右侧选择。测试连接将使用左侧输入框中的模型。</small>
         </div>
         <div class="qrf_settings_block">
             <label for="qrf_max_tokens">最大Token数: <span id="qrf_max_tokens_value"></span></label>

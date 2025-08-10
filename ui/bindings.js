@@ -79,13 +79,17 @@ function loadSettings(panel) {
     panel.find('#qrf_api_url').val(apiSettings.apiUrl);
     panel.find('#qrf_api_key').val(apiSettings.apiKey);
     
-    // 加载模型下拉框
-    const modelSelect = panel.find('#qrf_model');
+    // 加载模型输入框和下拉框
+    const modelInput = panel.find('#qrf_model');
+    const modelSelect = panel.find('#qrf_model_select');
+    
+    modelInput.val(apiSettings.model || '');
     modelSelect.empty();
     if (apiSettings.model) {
+        // 将当前模型作为唯一的选项添加到下拉列表中，并选中它
         modelSelect.append(new Option(apiSettings.model, apiSettings.model, true, true));
     } else {
-        modelSelect.append(new Option('请先获取模型列表', '', true, true));
+        modelSelect.append(new Option('<-请先获取模型', '', true, true));
     }
 
     panel.find('#qrf_max_tokens').val(apiSettings.max_tokens);
@@ -142,8 +146,17 @@ export function initializeBindings() {
         saveSetting(key, $(this).val());
     });
 
-    // 5. 下拉选择框 (Select)
-    panel.on('change.qrf', 'select', function() {
+    // 5. 模型下拉选择框 (Select for model)
+    panel.on('change.qrf', '#qrf_model_select', function() {
+        const selectedModel = $(this).val();
+        if (selectedModel) {
+            // 将选择的值同步到主输入框，并触发其change事件来保存
+            panel.find('#qrf_model').val(selectedModel).trigger('change');
+        }
+    });
+
+    // 绑定其他所有常规下拉框
+    panel.on('change.qrf', 'select:not(#qrf_model_select)', function() {
         const key = toCamelCase(this.id.replace('qrf_', ''));
         saveSetting(key, $(this).val());
     });
@@ -170,20 +183,27 @@ export function initializeBindings() {
 
         const models = await fetchModels(currentApiSettings);
 
-        if (models && models.length > 0) {
-            const modelSelect = panel.find('#qrf_model');
-            const currentModel = modelSelect.val();
-            modelSelect.empty();
+        const modelSelect = panel.find('#qrf_model_select');
+        const modelInput = panel.find('#qrf_model');
+        const currentModel = modelInput.val(); // 以输入框的值为准
 
-            models.sort((a, b) => a.id.localeCompare(b.id)).forEach(model => {
-                modelSelect.append(new Option(model.id, model.id));
+        modelSelect.empty();
+        modelSelect.append(new Option('请选择一个模型', ''));
+
+        if (models && models.length > 0) {
+            models.forEach(model => {
+                const modelId = model.id || model.model;
+                if (modelId) {
+                    modelSelect.append(new Option(modelId, modelId));
+                }
             });
-            
-            if (currentModel) {
+
+            // 获取后，尝试在新的列表中选中当前模型
+            if (currentModel && modelSelect.find(`option[value="${currentModel}"]`).length > 0) {
                 modelSelect.val(currentModel);
             }
-            // 触发一次change事件以保存新选择的模型
-            modelSelect.trigger('change');
+        } else {
+             toastr.info('未能获取到模型列表，您仍然可以手动输入模型名称。');
         }
         
         button.prop('disabled', false).find('i').removeClass('fa-spin');

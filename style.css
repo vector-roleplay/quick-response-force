@@ -75,7 +75,7 @@
 }
 
 /* 文本输入框和文本域 */
-.text_pole {
+#qrf_settings_panel .text_pole {
     background-color: #333;
     color: var(--text-color);
     border: 1px solid var(--border-color);
@@ -85,26 +85,26 @@
     box-sizing: border-box;
 }
 
-textarea.text_pole {
+#qrf_settings_panel textarea.text_pole {
     resize: vertical;
     min-height: 60px;
 }
 
 /* 滑动开关 */
-.toggle-switch {
+#qrf_settings_panel .toggle-switch {
     position: relative;
     display: inline-block;
     width: 40px;
     height: 24px;
 }
 
-.toggle-switch input {
+#qrf_settings_panel .toggle-switch input {
     opacity: 0;
     width: 0;
     height: 0;
 }
 
-.slider {
+#qrf_settings_panel .slider {
     position: absolute;
     cursor: pointer;
     top: 0;
@@ -116,7 +116,7 @@ textarea.text_pole {
     border-radius: 24px;
 }
 
-.slider:before {
+#qrf_settings_panel .slider:before {
     position: absolute;
     content: "";
     height: 18px;
@@ -128,16 +128,16 @@ textarea.text_pole {
     border-radius: 50%;
 }
 
-input:checked + .slider {
+#qrf_settings_panel input:checked + .slider {
     background-color: var(--accent-color);
 }
 
-input:checked + .slider:before {
+#qrf_settings_panel input:checked + .slider:before {
     transform: translateX(16px);
 }
 
 /* 滑块 */
-input[type="range"] {
+#qrf_settings_panel input[type="range"] {
     -webkit-appearance: none;
     width: 100%;
     height: 8px;
@@ -148,11 +148,11 @@ input[type="range"] {
     border-radius: 8px;
 }
 
-input[type="range"]:hover {
+#qrf_settings_panel input[type="range"]:hover {
     opacity: 1;
 }
 
-input[type="range"]::-webkit-slider-thumb {
+#qrf_settings_panel input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
     width: 18px;
@@ -162,7 +162,7 @@ input[type="range"]::-webkit-slider-thumb {
     border-radius: 50%;
 }
 
-input[type="range"]::-moz-range-thumb {
+#qrf_settings_panel input[type="range"]::-moz-range-thumb {
     width: 18px;
     height: 18px;
     background: var(--accent-color);
@@ -177,7 +177,7 @@ input[type="range"]::-moz-range-thumb {
     gap: 10px; /* 为多个按钮（如果未来有）增加间距 */
 }
 
-.qrf_footer .menu_button {
+#qrf_settings_panel .qrf_footer .menu_button {
     background-color: #333;
     width: auto; /* 覆盖可能存在的固定宽度 */
     padding: 8px 16px; /* 增加横向内边距，使其变宽 */

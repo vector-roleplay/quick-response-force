@@ -1,0 +1,186 @@
+/* 快速响应部队 - 插件样式 */
+/* 由Cline移植并重构 */
+
+#qrf_extension_frame .inline-drawer-header {
+    font-size: 1em;
+    padding: 8px 12px;
+}
+
+#qrf_settings_panel {
+    padding: 10px;
+    background-color: var(--background-color);
+}
+
+.qrf-header {
+    text-align: center;
+    margin-bottom: 15px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.qrf-header h4 {
+    margin: 0;
+    font-size: 1.1em;
+    color: var(--text-color);
+}
+
+.settings-group {
+    background: var(--background-color-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 10px 15px;
+    margin-bottom: 15px;
+}
+
+.settings-group legend {
+    font-weight: bold;
+    color: var(--text-color-primary);
+    padding: 0 8px;
+    font-size: 0.95em;
+}
+
+.qrf_settings_block {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.qrf_settings_block label {
+    flex: 1 1 120px;
+    min-width: 120px;
+    font-size: 0.9em;
+}
+
+.qrf_settings_block .text_pole,
+.qrf_settings_block input[type="range"] {
+    flex: 2 1 200px;
+}
+
+.qrf_settings_block .toggle-switch {
+    flex: 0 0 40px; /* 固定宽度，不拉伸 */
+}
+
+.qrf_settings_block .text_pole {
+    width: 100%;
+}
+
+.qrf_settings_block .notes {
+    flex-basis: 100%;
+    font-size: 0.8em;
+    color: var(--text-color-secondary);
+    margin-top: -5px;
+}
+
+/* 文本输入框和文本域 */
+.text_pole {
+    background-color: #333;
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 6px 8px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+textarea.text_pole {
+    resize: vertical;
+    min-height: 60px;
+}
+
+/* 滑动开关 */
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 24px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #333;
+    transition: .4s;
+    border-radius: 24px;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+}
+
+input:checked + .slider {
+    background-color: var(--accent-color);
+}
+
+input:checked + .slider:before {
+    transform: translateX(16px);
+}
+
+/* 滑块 */
+input[type="range"] {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 8px;
+    background: #333;
+    outline: none;
+    opacity: 0.7;
+    transition: opacity .2s;
+    border-radius: 8px;
+}
+
+input[type="range"]:hover {
+    opacity: 1;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    background: var(--accent-color);
+    cursor: pointer;
+    border-radius: 50%;
+}
+
+input[type="range"]::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    background: var(--accent-color);
+    cursor: pointer;
+    border-radius: 50%;
+}
+
+.qrf_footer {
+    display: flex;
+    justify-content: flex-end; /* 将按钮靠右对齐 */
+    margin-top: 20px;
+    gap: 10px; /* 为多个按钮（如果未来有）增加间距 */
+}
+
+.qrf_footer .menu_button {
+    background-color: #333;
+    width: auto; /* 覆盖可能存在的固定宽度 */
+    padding: 8px 16px; /* 增加横向内边距，使其变宽 */
+    height: 36px; /* 设置一个固定的高度 */
+    flex-grow: 0; /* 防止在flex布局中被拉伸 */
+}

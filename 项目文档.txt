@@ -1,5 +1,60 @@
 # 项目更新文档
 
+## [BUG修复] 修复API测试功能未传递高级参数的问题
+- **问题描述**: 用户反馈，在UI上调整了 `Top P`、`Presence Penalty` 和 `Frequency Penalty` 等滑块后，点击“测试API连接”按钮时，这些参数并未实际生效。
+- **根本原因**: `core/api.js` 文件中的 `testApiConnection` 函数在构建API请求时，虽然从UI正确收集了这些参数的值，但在随后的 `$.ajax` (后端模式) 和 `fetch` (前端模式) 调用中，请求体 (`data` 或 `body`) 中硬编码了固定的 `temperature: 0.1`，而完全忽略了从 `apiSettings` 对象中传入的其他高级参数。
+- **解决方案**:
+    1.  **定位问题函数**: 确认问题存在于 `core/api.js` 的 `testApiConnection` 函数中。
+    2.  **修正请求体**: 对 `testApiConnection` 函数执行了 `replace_in_file` 操作，修改了后端和前端两种模式下的请求体构造逻辑。
+    3.  **传递完整参数**: 确保了 `temperature`、`top_p`、`presence_penalty` 和 `frequency_penalty` 都是从 `apiSettings` 对象中动态读取，而不是使用硬编码的默认值。
+- **操作代码**:
+    - `core/api.js` (后端模式):
+        ```javascript
+        // 旧的、使用硬编码参数的请求
+        data: JSON.stringify({
+            // ...
+            temperature: 0.1, // 问题所在
+            // ...
+        }),
+        
+        // 新的、使用apiSettings动态参数的请求
+        data: JSON.stringify({
+            // ...
+            temperature: apiSettings.temperature,
+            top_p: apiSettings.top_p,
+            presence_penalty: apiSettings.presence_penalty,
+            frequency_penalty: apiSettings.frequency_penalty,
+            // ...
+        }),
+        ```
+- **效果**: 修复了API测试功能中的参数传递缺陷。现在，当用户点击测试按钮时，所有在UI上设置的高级参数都会被正确地包含在测试请求中，使得测试结果能够准确反映实际的API调用配置，增强了调试的可靠性。
+
+## [BUG修复] 修复 Google Gemini API 因不支持的参数而调用失败的问题
+- **问题描述**: 在使用“Google AI Studio”模式并选择 `gemini-2.5-pro` 等模型时，API 连接测试和调用均失败，返回 `400 Bad Request` 错误。
+- **根本原因**: 错误日志显示 `Penalty is not enabled for models/gemini-2.5-pro`。经排查，`core/utils/googleAdapter.js` 中的 `buildGoogleRequest` 函数在构建请求体时，硬编码包含了 `presencePenalty` 和 `frequencyPenalty` 这两个参数。然而，Google Gemini API 的 `v1beta` 版本并不支持这些 `penalty` 参数，导致请求被拒绝。
+- **解决方案**:
+    1.  **定位问题代码**: 分析 `core/api.js` 和 `core/utils/googleAdapter.js`，确认了问题出在 `googleAdapter.js` 的请求构建逻辑中。
+    2.  **移除无效参数**: 对 `core/utils/googleAdapter.js` 文件执行了 `replace_in_file` 操作，从 `buildGoogleRequest` 函数内的 `generationConfig` 对象中，直接删除了 `presencePenalty` 和 `frequencyPenalty` 两行。
+- **操作代码**:
+    - `core/utils/googleAdapter.js`:
+        ```javascript
+        // 旧的、包含无效参数的 generationConfig
+        const generationConfig = {
+            // ...
+            presencePenalty: apiSettings.presence_penalty,
+            frequencyPenalty: apiSettings.frequency_penalty,
+        };
+
+        // 新的、已移除无效参数的 generationConfig
+        const generationConfig = {
+            temperature: apiSettings.temperature,
+            topP: apiSettings.top_p,
+            topK: apiSettings.top_k,
+            maxOutputTokens: apiSettings.max_tokens,
+        };
+        ```
+- **效果**: 彻底解决了 Google Gemini API 的兼容性问题。现在插件可以正确地向 Gemini API 发送请求，不会再因包含无效参数而导致调用失败，确保了 Google AI Studio 模式的正常可用。
+
 ## [BUG修复] 修复世界书字符限制功能未生效的问题
 - **问题描述**: 即便在UI中设置了世界书最大字符数，但该限制并未实际应用，插件仍然将完整的世界书内容发送到上下文，未能实现截断功能。
 - **根本原因**: 插件在启动时，其配置加载逻辑存在缺陷。它使用了“浅合并” (`Object.assign`) 来合并默认设置和用户保存的设置。这导致当插件更新、添加了新的设置项（如 `worldbookCharLimit`）后，如果用户已经有旧的配置文件，这个新设置项无法被正确地添加到用户的配置中，从而导致功能失效。

@@ -305,7 +305,10 @@ export async function testApiConnection(apiSettings) {
                     messages: testMessages,
                     model: model,
                     max_tokens: 5,
-                    temperature: 0.1,
+                    temperature: apiSettings.temperature,
+                    top_p: apiSettings.top_p,
+                    presence_penalty: apiSettings.presence_penalty,
+                    frequency_penalty: apiSettings.frequency_penalty,
                     stream: false,
                     chat_completion_source: 'custom',
                     custom_url: apiUrl,
@@ -334,7 +337,10 @@ export async function testApiConnection(apiSettings) {
                     messages: testMessages,
                     model: model,
                     max_tokens: 5,
-                    temperature: 0.1,
+                    temperature: apiSettings.temperature,
+                    top_p: apiSettings.top_p,
+                    presence_penalty: apiSettings.presence_penalty,
+                    frequency_penalty: apiSettings.frequency_penalty,
                     stream: false,
                 });
             }

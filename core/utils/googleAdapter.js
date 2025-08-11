@@ -98,8 +98,6 @@ function buildGoogleRequest(messages, apiSettings) {
         topP: apiSettings.top_p,
         topK: apiSettings.top_k,
         maxOutputTokens: apiSettings.max_tokens,
-        presencePenalty: apiSettings.presence_penalty,
-        frequencyPenalty: apiSettings.frequency_penalty,
     };
     
     // According to Google's API docs, topK is an integer.

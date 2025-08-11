@@ -15,6 +15,27 @@ function toCamelCase(str) {
     return str.replace(/[-_]([a-z])/g, (g) => g[1].toUpperCase());
 }
 
+/**
+ * 根据选择的API模式，更新URL输入框的可见性并自动填充URL。
+ * @param {JQuery} panel - 设置面板的jQuery对象。
+ * @param {string} apiMode - 当前选择的API模式 ('backend', 'frontend', 或 'google')。
+ */
+function updateApiUrlVisibility(panel, apiMode) {
+    const apiUrlBlock = panel.find('#qrf_api_url_block');
+    const apiUrlInput = panel.find('#qrf_api_url');
+    
+    if (apiMode === 'google') {
+        apiUrlBlock.hide();
+        // 自动为Google设置固定的URL并保存
+        const googleUrl = 'https://generativelanguage.googleapis.com';
+        if (apiUrlInput.val() !== googleUrl) {
+            apiUrlInput.val(googleUrl);
+            saveSetting('apiUrl', googleUrl);
+        }
+    } else {
+        apiUrlBlock.show();
+    }
+}
 
 /**
  * 保存单个设置项到全局配置。
@@ -94,17 +115,28 @@ function loadSettings(panel) {
 
     panel.find('#qrf_max_tokens').val(apiSettings.max_tokens);
     panel.find('#qrf_temperature').val(apiSettings.temperature);
+    panel.find('#qrf_top_p').val(apiSettings.top_p);
+    panel.find('#qrf_presence_penalty').val(apiSettings.presence_penalty);
+    panel.find('#qrf_frequency_penalty').val(apiSettings.frequency_penalty);
     panel.find('#qrf_context_turn_count').val(apiSettings.contextTurnCount);
+    panel.find('#qrf_worldbook_char_limit').val(apiSettings.worldbookCharLimit);
 
     // 加载提示词
     panel.find('#qrf_main_prompt').val(apiSettings.mainPrompt);
     panel.find('#qrf_system_prompt').val(apiSettings.systemPrompt);
     panel.find('#qrf_final_system_directive').val(apiSettings.finalSystemDirective);
+
+    // 根据API模式更新URL字段的可见性
+    updateApiUrlVisibility(panel, apiSettings.apiMode || 'backend');
     
     // 绑定滑块的数值显示
     bindSlider(panel, '#qrf_max_tokens', '#qrf_max_tokens_value');
     bindSlider(panel, '#qrf_temperature', '#qrf_temperature_value');
+    bindSlider(panel, '#qrf_top_p', '#qrf_top_p_value');
+    bindSlider(panel, '#qrf_presence_penalty', '#qrf_presence_penalty_value');
+    bindSlider(panel, '#qrf_frequency_penalty', '#qrf_frequency_penalty_value');
     bindSlider(panel, '#qrf_context_turn_count', '#qrf_context_turn_count_value');
+    bindSlider(panel, '#qrf_worldbook_char_limit', '#qrf_worldbook_char_limit_value');
 }
 
 /**
@@ -132,6 +164,11 @@ export function initializeBindings() {
         const key = toCamelCase(this.name.replace('qrf_', ''));
         const value = $(`input[name="${this.name}"]:checked`).val();
         saveSetting(key, value);
+
+        // 如果是API模式切换，则更新URL可见性
+        if (this.name === 'qrf_api_mode') {
+            updateApiUrlVisibility(panel, value);
+        }
     });
 
     // 3. 文本输入框和密码框 (Text, Password)
@@ -165,7 +202,9 @@ export function initializeBindings() {
     panel.on('change.qrf', 'input[type="range"]', function() {
         const key = toCamelCase(this.id.replace('qrf_', ''));
         const value = $(this).val();
-        saveSetting(key, this.id.includes('temperature') ? parseFloat(value) : parseInt(value, 10));
+        const floatKeys = ['temperature', 'top_p', 'presence_penalty', 'frequency_penalty'];
+        const isFloat = floatKeys.some(floatKey => this.id.includes(floatKey));
+        saveSetting(key, isFloat ? parseFloat(value) : parseInt(value, 10));
     });
 
     // --- 功能按钮事件 ---
@@ -219,6 +258,12 @@ export function initializeBindings() {
             apiKey: panel.find('#qrf_api_key').val(),
             apiMode: panel.find('input[name="qrf_api_mode"]:checked').val(),
             model: panel.find('#qrf_model').val(),
+            // 传递所有滑块参数
+            temperature: parseFloat(panel.find('#qrf_temperature').val()),
+            top_p: parseFloat(panel.find('#qrf_top_p').val()),
+            presence_penalty: parseFloat(panel.find('#qrf_presence_penalty').val()),
+            frequency_penalty: parseFloat(panel.find('#qrf_frequency_penalty').val()),
+            max_tokens: parseInt(panel.find('#qrf_max_tokens').val(), 10),
         };
 
         await testApiConnection(currentApiSettings);

@@ -5,9 +5,10 @@
  * 提取并合并当前角色所有关联世界书的内容，并根据新的、支持递归的筛选逻辑进行处理。
  * 
  * @param {object} context - SillyTavern的上下文对象.
+ * @param {object} apiSettings - 插件的API设置.
  * @returns {Promise<string>} - 返回一个包含所有最终触发的世界书条目内容的字符串。
  */
-export async function getCombinedWorldbookContent(context) {
+export async function getCombinedWorldbookContent(context, apiSettings) {
     // 确保 TavernHelper API 和 context 可用
     if (!window.TavernHelper?.getCharLorebooks || !window.TavernHelper?.getLorebookEntries || !context) {
         console.warn('[剧情优化大师] TavernHelper API 或 context 未提供，无法获取世界书内容。');
@@ -96,7 +97,16 @@ export async function getCombinedWorldbookContent(context) {
             return '';
         }
 
-        return finalContent.join('\n\n---\n\n');
+        const combinedContent = finalContent.join('\n\n---\n\n');
+        
+        // 使用传入的apiSettings进行截断
+        const limit = apiSettings?.worldbookCharLimit || 60000;
+
+        if (combinedContent.length > limit) {
+            return combinedContent.substring(0, limit);
+        }
+
+        return combinedContent;
 
     } catch (error) {
         console.error(`[剧情优化大师] 处理递归世界书逻辑时出错:`, error);

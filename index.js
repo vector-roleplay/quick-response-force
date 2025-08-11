@@ -52,7 +52,7 @@ async function onGenerationAfterCommands(type, params, dryRun) {
         // 提取世界书
         let worldbookContent = '';
         if (apiSettings.worldbookEnabled) {
-            worldbookContent = await getCombinedWorldbookContent(context);
+            worldbookContent = await getCombinedWorldbookContent(context, apiSettings);
         }
 
         // 调用API
@@ -103,10 +103,17 @@ function loadPluginStyles() {
 }
 
 jQuery(async () => {
-    if (!extension_settings[extension_name]) {
-        extension_settings[extension_name] = {};
-    }
-    Object.assign(extension_settings[extension_name], { ...defaultSettings, ...extension_settings[extension_name] });
+    // 修复：执行深度合并，确保新设置（如worldbookCharLimit）能被应用到现有配置中
+    const currentSettings = extension_settings[extension_name] || {};
+    const newSettings = {
+        ...defaultSettings,
+        ...currentSettings,
+        apiSettings: {
+            ...defaultSettings.apiSettings,
+            ...(currentSettings.apiSettings || {}),
+        },
+    };
+    extension_settings[extension_name] = newSettings;
 
     const intervalId = setInterval(async () => {
         if ($('#extensions_settings').length > 0) {

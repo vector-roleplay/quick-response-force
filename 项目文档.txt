@@ -1,5 +1,185 @@
 # 项目更新文档
 
+## [BUG修复] 修复世界书字符限制功能未生效的问题
+- **问题描述**: 即便在UI中设置了世界书最大字符数，但该限制并未实际应用，插件仍然将完整的世界书内容发送到上下文，未能实现截断功能。
+- **根本原因**: 插件在启动时，其配置加载逻辑存在缺陷。它使用了“浅合并” (`Object.assign`) 来合并默认设置和用户保存的设置。这导致当插件更新、添加了新的设置项（如 `worldbookCharLimit`）后，如果用户已经有旧的配置文件，这个新设置项无法被正确地添加到用户的配置中，从而导致功能失效。
+- **解决方案**:
+    1.  **重构设置加载逻辑 (`index.js`)**: 对插件入口文件 `index.js` 中的初始化代码进行了彻底修改。
+    2.  **实现深度合并**: 放弃了原有的 `Object.assign` 方案，手动实现了一个“深度合并”逻辑。新的代码会递归地合并 `defaultSettings` 和用户现有 `extension_settings`，特别是对嵌套的 `apiSettings` 对象进行了正确的处理。
+    3.  **确保新配置注入**: 这一修改确保了无论用户何时更新插件，所有新增的默认设置项（包括 `worldbookCharLimit`）都能被可靠地注入到其实际生效的配置中，即使他们保留了旧的设置文件。
+- **操作代码**:
+    - `index.js` (初始化逻辑重构):
+        ```javascript
+        // 旧的、有问题的浅合并逻辑已被替换
+        // Object.assign(extension_settings[extension_name], { ...defaultSettings, ...extension_settings[extension_name] });
+
+        // 新的深度合并逻辑:
+        const currentSettings = extension_settings[extension_name] || {};
+        const newSettings = {
+            ...defaultSettings,
+            ...currentSettings,
+            apiSettings: {
+                ...defaultSettings.apiSettings,
+                ...(currentSettings.apiSettings || {}),
+            },
+        };
+        extension_settings[extension_name] = newSettings;
+        ```
+- **效果**: 从根本上解决了新功能配置不生效的问题。世界书字符截断功能现在可以被正确加载和应用，确保了插件的稳定性和预期的行为一致性。
+
+## [功能更新] UI增强与世界书内容控制
+- **任务描述**: 根据用户需求，对插件UI进行多项改进，包括更新API说明、调整默认连接模式，并新增对世界书内容长度的控制功能，以防止因内容过长导致的API错误。
+- **核心需求**:
+    1.  在UI中为API模式添加更清晰的说明。
+    2.  将默认的API连接模式更改为“前端直连”。
+    3.  增加一个滑块，允许用户设置世界书内容的最大字符数，并实现相应的截断逻辑。
+- **解决方案**:
+    1.  **更新UI说明和默认选项 (`settings.html`)**:
+        -   在API模式选择区域下方，增加了一段详细的说明文字，指导用户如何选择合适的模式。
+        -   将 `qrf_api_mode_frontend` 单选框设置为默认 `checked` 状态。
+    2.  **添加世界书字符限制滑块 (`settings.html`)**:
+        -   在设置面板中新增了一个“内容设置”区域。
+        -   在该区域内，添加了一个ID为 `qrf_worldbook_char_limit` 的滑块（range input），允许用户在1,000到200,000字符之间进行选择，默认值为60,000。
+    3.  **更新默认设置 (`utils/settings.js`)**:
+        -   将 `defaultSettings.apiSettings.apiMode` 的默认值从 `'backend'` 修改为 `'frontend'`。
+        -   在 `defaultSettings.apiSettings` 中增加了 `worldbookCharLimit: 60000` 字段，用于存储新的设置项。
+    4.  **绑定UI逻辑 (`ui/bindings.js`)**:
+        -   在 `loadSettings` 函数中，增加了加载 `worldbookCharLimit` 值到滑块的逻辑。
+        -   通过 `bindSlider` 辅助函数，为新的滑块添加了事件监听，确保UI可以实时显示和保存用户的选择。
+    5.  **实现世界书截断逻辑 (`core/lore.js`)**:
+        -   在 `getCombinedWorldbookContent` 函数的末尾，修改了返回逻辑。
+        -   在组合所有触发的世界书条目后，代码会从全局设置中读取 `worldbookCharLimit` 的值。
+        -   如果组合后的内容总长度超过了设定的限制，则使用 `substring(0, limit)` 方法对其进行截断，确保最终输出给API的内容不会超长。
+- **操作代码**:
+    - `settings.html` (添加说明和滑块):
+        ```html
+        <!-- API模式说明 -->
+        <div class="qrf_settings_block_hint" style="color: var(--text_secondary); margin-top: 5px; font-size: 0.8em;">
+            除谷歌直连外优先使用前端...
+        </div>
+        <!-- 世界书滑块 -->
+        <fieldset class="settings-group">
+            <legend><i class="fas fa-book-open"></i> 内容设置</legend>
+            <div class="qrf_settings_block">
+                <label for="qrf_worldbook_char_limit">世界书最大字符数: <span id="qrf_worldbook_char_limit_value">60000</span></label>
+                <input type="range" id="qrf_worldbook_char_limit" min="1000" max="200000" step="1000" value="60000">
+                ...
+            </div>
+        </fieldset>
+        ```
+    - `utils/settings.js` (更新默认值):
+        ```javascript
+        export const defaultSettings = {
+            apiSettings: {
+                apiMode: 'frontend',
+                // ...
+                worldbookCharLimit: 60000,
+                // ...
+            }
+        };
+        ```
+    - `core/lore.js` (实现截断):
+        ```javascript
+        // ... 获取并组合世界书内容 ...
+        const combinedContent = finalContent.join('\n\n---\n\n');
+        
+        const settings = window.extension_settings?.[extensionName]?.apiSettings || {};
+        const limit = settings.worldbookCharLimit || 60000;
+
+        if (combinedContent.length > limit) {
+            return combinedContent.substring(0, limit);
+        }
+
+        return combinedContent;
+        ```
+- **效果**: 插件的配置界面对用户更加友好，默认设置更符合常规用法。新增的世界书字符限制功能，有效避免了因上下文过长可能引发的潜在问题，增强了插件的稳定性。
+
+## [功能更新] 新增Google AI Studio模式并重构API架构
+
+- **任务描述**: 根据用户反馈，将API设置重构为三种独立的并行模式：“后端代理”、“前端直连”和“Google AI Studio”，并为所有模式添加 `Top P`, `Presence Penalty`, `Frequency Penalty` 参数控制。
+- **核心需求**: 1. 提供一个清晰、独立的“Google AI Studio”选项，该选项自动处理URL且无需用户手动输入。 2. 简化UI，移除之前多余的层级。 3. 确保所有API参数对三种模式都有效。
+- **解决方案**:
+    1.  **简化UI (`settings.html`)**:
+        -   移除了“API类型”选择器。
+        -   将“API访问模式”重命名为“API模式”，并提供了三个直接选项：`后端代理 (OpenAI兼容)`, `前端直连 (OpenAI兼容)`, 和 `Google AI Studio (前端)`。
+    2.  **简化配置 (`utils/settings.js`)**:
+        -   完全移除了 `apiType` 字段，现在仅通过 `apiMode` (`backend`, `frontend`, `google`) 来区分逻辑。
+        -   为新增的 `top_p`, `presence_penalty`, `frequency_penalty` 添加了默认值。
+    3.  **重构UI逻辑 (`ui/bindings.js`)**:
+        -   重写了 `updateApiUrlVisibility` 函数，现在它直接根据 `apiMode` 的值来操作：当 `apiMode` 为 `google` 时，隐藏URL输入框并自动填充和保存Google的官方URL；否则，显示URL输入框。
+        -   更新了所有事件监听器，以正确处理三种模式的切换和数据加载。
+    4.  **重构核心API逻辑 (`core/api.js`)**:
+        -   对 `callInterceptionApi`, `fetchModels`, 和 `testApiConnection` 函数进行了彻底重构。
+        -   所有函数现在都包含一个基于 `apiSettings.apiMode` 的顶层逻辑分支。
+        -   `backend` 模式调用 `callApiViaBackend` 或相应的 `ajax` 请求。
+        -   `frontend` 和 `google` 模式都执行前端 `fetch`，但在内部：
+            -   `google` 模式会调用 `googleAdapter.js` 中的辅助函数来构建请求体、构造特定的URL并解析响应。
+            -   `frontend` 模式则执行标准的OpenAI兼容请求。
+- **操作代码**:
+    - `settings.html` (重构API模式选择):
+        ```html
+        <div class="qrf_settings_block_radio">
+            <label>API模式</label>
+            <div class="qrf_radio_group">
+                <input type="radio" id="qrf_api_mode_backend" name="qrf_api_mode" value="backend" checked>
+                <label for="qrf_api_mode_backend">后端代理 (OpenAI兼容)</label>
+                <input type="radio" id="qrf_api_mode_frontend" name="qrf_api_mode" value="frontend">
+                <label for="qrf_api_mode_frontend">前端直连 (OpenAI兼容)</label>
+                <input type="radio" id="qrf_api_mode_google" name="qrf_api_mode" value="google">
+                <label for="qrf_api_mode_google">Google AI Studio (前端)</label>
+            </div>
+        </div>
+        ```
+    - `ui/bindings.js` (URL可见性逻辑):
+        ```javascript
+        function updateApiUrlVisibility(panel, apiMode) {
+            const apiUrlBlock = panel.find('#qrf_api_url_block');
+            if (apiMode === 'google') {
+                apiUrlBlock.hide();
+                // ... auto-set URL ...
+            } else {
+                apiUrlBlock.show();
+            }
+        }
+        ```
+    - `core/api.js` (核心逻辑分支):
+        ```javascript
+        // In testApiConnection, fetchModels, callInterceptionApi...
+        if (apiSettings.apiMode === 'backend') {
+            // ... backend logic ...
+        } else { // frontend or google
+            if (apiSettings.apiMode === 'google') {
+                // ... google frontend logic ...
+            } else { // frontend
+                // ... openai frontend logic ...
+            }
+        }
+        ```
+- **效果**: 插件的API配置流程已根据用户反馈得到极大简化和澄清。用户现在可以通过一个简单的单选按钮在三种清晰定义的模式之间切换。Google AI Studio的集成变得无缝，不再需要用户进行任何手动URL配置，显著改善了用户体验。所有API参数现在都能正确地应用于所有模式。
+
+## [功能更新] 修改默认主系统提示词
+- **任务描述**: 根据用户指令，将插件的默认主系统提示词 (`mainPrompt`) 更新为 `默认主提示词.txt` 中定义的新内容。
+- **核心需求**: 更改插件的核心行为逻辑，使其在调用剧情分析API时使用用户指定的全新指令集。
+- **解决方案**:
+    1.  **分析入口文件**: 首先检查 `utils/settings.js`，确认主提示词的存储位置。
+    2.  **定位目标字段**: 在 `utils/settings.js` 文件中，成功定位到负责存储主提示词的 `mainPrompt` 字段。
+    3.  **执行内容替换**: 使用 `replace_in_file` 指令，将 `mainPrompt` 字段的整个多行字符串值，替换为 `默认主提示词.txt` 中提供的完整内容。
+- **操作代码**:
+    - `utils/settings.js`:
+        ```xml
+        <replace_in_file>
+        <path>utils/settings.js</path>
+        <diff>
+        ------- SEARCH
+        mainPrompt: `... (旧的提示词长文本) ...`,
+        =======
+        mainPrompt: `... (来自“默认主提示词.txt”的新的提示词长文本) ...`,
+        +++++++ REPLACE
+        </diff>
+        </replace_in_file>
+        ```
+- **效果**: 插件的默认主提示词已成功更新。现在，当用户首次加载插件或重置为默认设置时，系统将采用全新的、用户指定的剧情生成规则和结构，实现了核心AI行为的自定义。
+
 ## [BUG修复] 修复AI回复在UI中显示为`[object Object]`的问题
 
 - **问题描述**: 在前端UI中，AI返回的回复内容被错误地显示为字符串 `"[object Object]"`，而不是实际的文本内容。
@@ -72,7 +252,7 @@
     - `core/api.js`:
         ```javascript
         // 旧的URL构建逻辑:
-        // const modelsUrl = apiUrl.includes('/v1') ? apiUrl.replace(/chat\/completions$/, 'models') : apiUrl.replace(/\/$/, '') + '/v1/models';
+        // const modelsUrl = apiUrl.includes('/v1')? apiUrl.replace(/chat\/completions$/, 'models') : apiUrl.replace(/\/$/, '') + '/v1/models';
 
         // 新的、更健壮的URL构建逻辑:
         let modelsUrl = apiUrl.replace(/\/$/, ''); // 移除末尾斜杠

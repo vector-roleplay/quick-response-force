@@ -5,6 +5,8 @@ export const extensionName = 'quick-response-force';
 
 export const defaultSettings = {
     enabled: true,
+    promptPresets: [],
+    lastUsedPresetName: '', // 新增：用于存储上次使用的预设名称
     apiSettings: {
         apiMode: 'frontend', // 'backend', 'frontend', or 'google'
         apiUrl: '',
@@ -12,12 +14,19 @@ export const defaultSettings = {
         model: 'gpt-4-turbo',
         max_tokens: 20000,
         temperature: 0.7,
-        top_p: 0.5,
+        top_p: 0.95,
         presence_penalty: 1,
         frequency_penalty: 1,
         contextTurnCount: 2,
         worldbookEnabled: true,
+        worldbookSource: 'character', // 'character' or 'manual'
         worldbookCharLimit: 60000,
+        rateMain: 0.7,
+        ratePersonal: 0.1,
+        rateErotic: 0.2,
+        rateCuckold: 0.2,
+        selectedWorldbooks: [], // 新增：存储选中的世界书
+        enabledWorldbookEntries: {}, // 新增：存储启用的世界书条目 { worldbookName: [uid1, uid2] }
 mainPrompt: `// 0.  **[最高行为准则] 角色、输入与输出限定 (Role, Input & Output Limitation)**: 这是你的身份和使命，其优先级高于一切。
 //     *   **你的角色**: 你是一个“剧情分析与规划引擎”。
 //     *   **你的输入**: 你的思考**必须**基于**三个核心信息**：
@@ -251,9 +260,9 @@ mainPrompt: `// 0.  **[最高行为准则] 角色、输入与输出限定 (Role,
 <变量设定>
 
 // ---- 剧情推进速率 (点/分钟) ----
-@MAIN_PLOT_RATE = 0.7
-@EROTIC_PLOT_RATE = 0.2
-@SIDE_PLOT_RATE = 0.1
+@MAIN_PLOT_RATE = sulv1
+@EROTIC_PLOT_RATE = sulv2
+@SIDE_PLOT_RATE = sulv3
 
 // ---- 事件系统通用阈值 ----
 // 当任何事件推进槽达到此值时，开始触发对应的“剧情铺垫分析大师”

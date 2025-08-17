@@ -2,6 +2,7 @@
 // 由Cline移植并重构，核心功能来自Amily2号插件
 
 import { getContext, extension_settings } from '/scripts/extensions.js';
+import { characters, this_chid } from '/script.js';
 import { eventSource, event_types } from '/script.js';
 import { createDrawer } from './ui/drawer.js';
 import { callInterceptionApi } from './core/api.js';
@@ -17,7 +18,17 @@ async function onGenerationAfterCommands(type, params, dryRun) {
         return;
     }
 
-    const settings = extension_settings[extension_name];
+    // 在每次执行前，都重新进行一次深度合并，以获取最新、最完整的设置状态
+    const currentSettings = extension_settings[extension_name] || {};
+    const settings = {
+        ...defaultSettings,
+        ...currentSettings,
+        apiSettings: {
+            ...defaultSettings.apiSettings,
+            ...(currentSettings.apiSettings || {}),
+        },
+    };
+
     if (!settings.enabled || !settings.apiSettings?.apiUrl) {
         return;
     }
@@ -27,7 +38,14 @@ async function onGenerationAfterCommands(type, params, dryRun) {
 
     try {
         const context = getContext();
-        const apiSettings = settings.apiSettings;
+        const character = characters[this_chid];
+
+        // 深度合并设置：以刚刚刷新过的全局设置为基础，用角色卡设置覆盖
+        const characterSettings = character?.data?.extensions?.[extension_name]?.apiSettings || {};
+        const apiSettings = {
+            ...settings.apiSettings,
+            ...characterSettings,
+        };
 
         // 只处理来自主输入框的新消息
         const userMessage = $('#send_textarea').val();
@@ -55,13 +73,40 @@ async function onGenerationAfterCommands(type, params, dryRun) {
             worldbookContent = await getCombinedWorldbookContent(context, apiSettings);
         }
 
+        // 在调用API前，执行sulv占位符替换
+        let finalApiSettings = { ...apiSettings };
+        const replacements = {
+            'sulv1': finalApiSettings.rateMain,
+            'sulv2': finalApiSettings.ratePersonal,
+            'sulv3': finalApiSettings.rateErotic,
+            'sulv4': finalApiSettings.rateCuckold
+        };
+
+        // 创建一个新的对象来存储替换后的提示词，以避免直接修改原始设置对象
+        const processedPrompts = {
+            mainPrompt: finalApiSettings.mainPrompt,
+            systemPrompt: finalApiSettings.systemPrompt,
+            finalSystemDirective: finalApiSettings.finalSystemDirective
+        };
+
+        for (const key in replacements) {
+            const value = replacements[key];
+            const regex = new RegExp(key, 'g');
+            processedPrompts.mainPrompt = processedPrompts.mainPrompt.replace(regex, value);
+            processedPrompts.systemPrompt = processedPrompts.systemPrompt.replace(regex, value);
+            processedPrompts.finalSystemDirective = processedPrompts.finalSystemDirective.replace(regex, value);
+        }
+        
+        // 将处理过的提示词合并回最终的API设置中
+        finalApiSettings = { ...finalApiSettings, ...processedPrompts };
+        
         // 调用API
-        const processedMessage = await callInterceptionApi(userMessage, slicedContext, apiSettings, worldbookContent);
+        const processedMessage = await callInterceptionApi(userMessage, slicedContext, finalApiSettings, worldbookContent);
 
         if (processedMessage) {
             // 根据新的两步式流程，`processedMessage`现在是分析AI生成的完整`<plot>`模块。
             // 我们将用户的原始输入与这个plot模块组合，并使用用户在设置中自定义的指令来包裹它们。
-            const finalSystemDirective = apiSettings.finalSystemDirective || '[SYSTEM_DIRECTIVE: You are a storyteller. The following <plot> block is your absolute script for this turn. You MUST follow the <directive> within it to generate the story.]';
+            const finalSystemDirective = finalApiSettings.finalSystemDirective || '[SYSTEM_DIRECTIVE: You are a storyteller. The following <plot> block is your absolute script for this turn. You MUST follow the <directive> within it to generate the story.]';
             const finalMessage = `${userMessage}\n\n${finalSystemDirective}\n${processedMessage}`;
 
             // 核心修改：只更新文本框内容，不自动点击发送

@@ -9,46 +9,92 @@
  * @returns {Promise<string>} - 返回一个包含所有最终触发的世界书条目内容的字符串。
  */
 export async function getCombinedWorldbookContent(context, apiSettings) {
+    if (!apiSettings.worldbookEnabled) {
+        return '';
+    }
+
     // 确保 TavernHelper API 和 context 可用
-    if (!window.TavernHelper?.getCharLorebooks || !window.TavernHelper?.getLorebookEntries || !context) {
+    if (!window.TavernHelper?.getLorebookEntries || !context) {
         console.warn('[剧情优化大师] TavernHelper API 或 context 未提供，无法获取世界书内容。');
         return '';
     }
 
     try {
-        const chatHistory = context.chat.map(message => message.mes).join('\n').toLowerCase();
+        let bookNames = [];
+        let userEnabledEntries = null; // 用于标记是否使用手动筛选
 
-        // 1. 获取并分类所有已启用的世界书条目
-        const charLorebooks = await window.TavernHelper.getCharLorebooks({ type: 'all' });
-        const bookNames = [];
-        if (charLorebooks.primary) bookNames.push(charLorebooks.primary);
-        if (charLorebooks.additional?.length) bookNames.push(...charLorebooks.additional);
+        // 根据世界书来源设置决定如何获取书名
+        if (apiSettings.worldbookSource === 'manual') {
+            bookNames = apiSettings.selectedWorldbooks || [];
+            if (bookNames.length === 0) {
+                console.log(`[剧情优化大师] 未在手动模式下选择任何世界书。`);
+                return '';
+            }
+        } else { // 默认为 'character' 模式
+            if (!window.TavernHelper?.getCharLorebooks) {
+                console.warn('[剧情优化大师] TavernHelper API 不可用，无法获取角色绑定的世界书。');
+                return '';
+            }
+            const charLorebooks = await window.TavernHelper.getCharLorebooks({ type: 'all' });
+            if (charLorebooks.primary) bookNames.push(charLorebooks.primary);
+            if (charLorebooks.additional?.length) bookNames.push(...charLorebooks.additional);
+            if (bookNames.length === 0) {
+                console.log(`[剧情优化大师] 当前角色未绑定任何世界书。`);
+                return '';
+            }
+        }
 
-        if (bookNames.length === 0) return '';
-
-        let allEnabledEntries = [];
+        // 1. 获取所有相关世界书的条目
+        let allEntries = [];
         for (const bookName of bookNames) {
             if (bookName) {
                 const entries = await window.TavernHelper.getLorebookEntries(bookName);
                 if (entries?.length) {
-                    allEnabledEntries.push(...entries.filter(entry => entry.enabled));
+                    // 为每个条目附加其所属的书名
+                    entries.forEach(entry => allEntries.push({ ...entry, bookName }));
                 }
             }
         }
 
+        if (allEntries.length === 0) {
+            console.log(`[剧情优化大师] 从指定的 ${bookNames.length} 个世界书中未找到任何条目。`);
+            return '';
+        }
+        
+        // 2. 根据UI中的勾选状态筛选出用户启用的条目 (对两种模式都适用)
+        const enabledEntriesMap = apiSettings.enabledWorldbookEntries || {};
+        userEnabledEntries = allEntries.filter(entry => {
+            if (!entry.enabled) return false; // 忽略在世界书本身中被禁用的条目
+
+            const bookConfig = enabledEntriesMap[entry.bookName];
+            if (bookConfig !== undefined) {
+                // 如果这本书的配置存在 (即使用户勾选后又全部取消，这里会是一个空数组 [])
+                // 那么就严格按照配置来筛选。
+                return bookConfig.includes(entry.uid);
+            } else {
+                // 如果这本书的配置完全不存在 (undefined)，说明用户从未在UI上操作过这本书。
+                // 在这种情况下，为了向后兼容和默认行为，我们假定其所有条目都是启用的。
+                return true;
+            }
+        });
+
+        if (userEnabledEntries.length === 0) {
+            console.log(`[剧情优化大师] 未找到任何可用的世界书条目。`);
+            return '';
+        }
+        
+        // --- 开始执行递归逻辑 ---
+        const chatHistory = context.chat.map(message => message.mes).join('\n').toLowerCase();
         const getEntryKeywords = (entry) => [...new Set([...(entry.key || []), ...(entry.keys || [])])].map(k => k.toLowerCase());
 
-        // 2. 初始化递归逻辑
-        const blueLightEntries = allEnabledEntries.filter(entry => entry.type === 'constant');
-        let pendingGreenLights = allEnabledEntries.filter(entry => entry.type !== 'constant');
+        const blueLightEntries = userEnabledEntries.filter(entry => entry.type === 'constant');
+        let pendingGreenLights = userEnabledEntries.filter(entry => entry.type !== 'constant');
         
         const triggeredEntries = new Set([...blueLightEntries]);
 
-        // 3. 开始递归触发循环
         while (true) {
             let hasChangedInThisPass = false;
             
-            // 构建本轮次的搜索文本
             const recursionSourceContent = Array.from(triggeredEntries)
                 .filter(e => !e.prevent_recursion)
                 .map(e => e.content)
@@ -58,7 +104,6 @@ export async function getCombinedWorldbookContent(context, apiSettings) {
 
             const nextPendingGreenLights = [];
             
-            // 遍历待处理的绿灯条目
             for (const entry of pendingGreenLights) {
                 const keywords = getEntryKeywords(entry);
                 let isTriggered = false;
@@ -79,16 +124,12 @@ export async function getCombinedWorldbookContent(context, apiSettings) {
                 }
             }
             
-            // 如果本轮没有新条目被触发，则递归结束
-            if (!hasChangedInThisPass) {
-                break;
-            }
+            if (!hasChangedInThisPass) break;
             
-            // 否则，用剩下未触发的条目进行下一轮
             pendingGreenLights = nextPendingGreenLights;
         }
 
-        // 4. 格式化并返回最终结果
+        // --- 格式化并返回最终结果 ---
         const finalContent = Array.from(triggeredEntries)
             .map(entry => entry.content)
             .filter(Boolean);
@@ -99,10 +140,9 @@ export async function getCombinedWorldbookContent(context, apiSettings) {
 
         const combinedContent = finalContent.join('\n\n---\n\n');
         
-        // 使用传入的apiSettings进行截断
         const limit = apiSettings?.worldbookCharLimit || 60000;
-
         if (combinedContent.length > limit) {
+            console.log(`[剧情优化大师] 世界书内容 (${combinedContent.length} chars) 超出限制 (${limit} chars)，将被截断。`);
             return combinedContent.substring(0, limit);
         }
 

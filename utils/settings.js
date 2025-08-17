@@ -261,8 +261,8 @@ mainPrompt: `// 0.  **[最高行为准则] 角色、输入与输出限定 (Role,
 
 // ---- 剧情推进速率 (点/分钟) ----
 @MAIN_PLOT_RATE = sulv1
-@EROTIC_PLOT_RATE = sulv2
-@SIDE_PLOT_RATE = sulv3
+@EROTIC_PLOT_RATE = sulv3
+@SIDE_PLOT_RATE = sulv2
 
 // ---- 事件系统通用阈值 ----
 // 当任何事件推进槽达到此值时，开始触发对应的“剧情铺垫分析大师”

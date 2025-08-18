@@ -9,11 +9,45 @@
  * @returns {Promise<string>} - 返回一个包含所有最终触发的世界书条目内容的字符串。
  */
 export async function getCombinedWorldbookContent(context, apiSettings) {
-    if (!apiSettings.worldbookEnabled) {
+    // [核心修复] 运行时直接从UI读取所有世界书相关设置，确保数据源绝对一致。
+    const panel = $('#qrf_settings_panel');
+    let liveSettings = {};
+
+    if (panel.length > 0) {
+        liveSettings.worldbookEnabled = panel.find('#qrf_worldbook_enabled').is(':checked');
+        liveSettings.worldbookSource = panel.find('input[name="qrf_worldbook_source"]:checked').val() || 'character';
+        liveSettings.selectedWorldbooks = panel.find('#qrf_selected_worldbooks').val() || [];
+        liveSettings.worldbookCharLimit = parseInt(panel.find('#qrf_worldbook_char_limit').val(), 10) || 60000;
+
+        // 实时构建启用的条目列表，这部分逻辑模仿自 bindings.js 中的 saveEnabledEntries
+        let enabledEntries = {};
+        panel.find('#qrf_worldbook_entry_list_container input[type="checkbox"]').each(function() {
+            if ($(this).is(':checked')) {
+                const bookName = $(this).data('book');
+                const uid = parseInt($(this).data('uid'));
+                if (!enabledEntries[bookName]) {
+                    enabledEntries[bookName] = [];
+                }
+                enabledEntries[bookName].push(uid);
+            }
+        });
+        liveSettings.enabledWorldbookEntries = enabledEntries;
+    } else {
+        // 如果UI面板不存在，则回退到传入的设置，以保证在无UI环境下的兼容性
+        console.warn('[剧情优化大师] 未找到设置面板，世界书功能将回退到使用已保存的设置。');
+        liveSettings = {
+            worldbookEnabled: apiSettings.worldbookEnabled,
+            worldbookSource: apiSettings.worldbookSource,
+            selectedWorldbooks: apiSettings.selectedWorldbooks,
+            worldbookCharLimit: apiSettings.worldbookCharLimit,
+            enabledWorldbookEntries: apiSettings.enabledWorldbookEntries,
+        };
+    }
+
+    if (!liveSettings.worldbookEnabled) {
         return '';
     }
 
-    // 确保 TavernHelper API 和 context 可用
     if (!window.TavernHelper?.getLorebookEntries || !context) {
         console.warn('[剧情优化大师] TavernHelper API 或 context 未提供，无法获取世界书内容。');
         return '';
@@ -21,69 +55,38 @@ export async function getCombinedWorldbookContent(context, apiSettings) {
 
     try {
         let bookNames = [];
-        let userEnabledEntries = null; // 用于标记是否使用手动筛选
-
-        // 根据世界书来源设置决定如何获取书名
-        if (apiSettings.worldbookSource === 'manual') {
-            bookNames = apiSettings.selectedWorldbooks || [];
-            if (bookNames.length === 0) {
-                console.log(`[剧情优化大师] 未在手动模式下选择任何世界书。`);
-                return '';
-            }
-        } else { // 默认为 'character' 模式
-            if (!window.TavernHelper?.getCharLorebooks) {
-                console.warn('[剧情优化大师] TavernHelper API 不可用，无法获取角色绑定的世界书。');
-                return '';
-            }
+        
+        if (liveSettings.worldbookSource === 'manual') {
+            bookNames = liveSettings.selectedWorldbooks;
+            if (bookNames.length === 0) return '';
+        } else {
             const charLorebooks = await window.TavernHelper.getCharLorebooks({ type: 'all' });
             if (charLorebooks.primary) bookNames.push(charLorebooks.primary);
             if (charLorebooks.additional?.length) bookNames.push(...charLorebooks.additional);
-            if (bookNames.length === 0) {
-                console.log(`[剧情优化大师] 当前角色未绑定任何世界书。`);
-                return '';
-            }
+            if (bookNames.length === 0) return '';
         }
 
-        // 1. 获取所有相关世界书的条目
         let allEntries = [];
         for (const bookName of bookNames) {
             if (bookName) {
                 const entries = await window.TavernHelper.getLorebookEntries(bookName);
                 if (entries?.length) {
-                    // 为每个条目附加其所属的书名
                     entries.forEach(entry => allEntries.push({ ...entry, bookName }));
                 }
             }
         }
 
-        if (allEntries.length === 0) {
-            console.log(`[剧情优化大师] 从指定的 ${bookNames.length} 个世界书中未找到任何条目。`);
-            return '';
-        }
+        if (allEntries.length === 0) return '';
         
-        // 2. 根据UI中的勾选状态筛选出用户启用的条目 (对两种模式都适用)
-        const enabledEntriesMap = apiSettings.enabledWorldbookEntries || {};
-        userEnabledEntries = allEntries.filter(entry => {
-            if (!entry.enabled) return false; // 忽略在世界书本身中被禁用的条目
-
+        const enabledEntriesMap = liveSettings.enabledWorldbookEntries || {};
+        const userEnabledEntries = allEntries.filter(entry => {
+            if (!entry.enabled) return false;
             const bookConfig = enabledEntriesMap[entry.bookName];
-            if (bookConfig !== undefined) {
-                // 如果这本书的配置存在 (即使用户勾选后又全部取消，这里会是一个空数组 [])
-                // 那么就严格按照配置来筛选。
-                return bookConfig.includes(entry.uid);
-            } else {
-                // 如果这本书的配置完全不存在 (undefined)，说明用户从未在UI上操作过这本书。
-                // 在这种情况下，为了向后兼容和默认行为，我们假定其所有条目都是启用的。
-                return true;
-            }
+            return bookConfig ? bookConfig.includes(entry.uid) : false;
         });
 
-        if (userEnabledEntries.length === 0) {
-            console.log(`[剧情优化大师] 未找到任何可用的世界书条目。`);
-            return '';
-        }
+        if (userEnabledEntries.length === 0) return '';
         
-        // --- 开始执行递归逻辑 ---
         const chatHistory = context.chat.map(message => message.mes).join('\n').toLowerCase();
         const getEntryKeywords = (entry) => [...new Set([...(entry.key || []), ...(entry.keys || [])])].map(k => k.toLowerCase());
 
@@ -106,15 +109,9 @@ export async function getCombinedWorldbookContent(context, apiSettings) {
             
             for (const entry of pendingGreenLights) {
                 const keywords = getEntryKeywords(entry);
-                let isTriggered = false;
-                if (keywords.length > 0) {
-                    isTriggered = keywords.some(keyword => {
-                        if (entry.exclude_recursion) {
-                            return chatHistory.includes(keyword);
-                        }
-                        return fullSearchText.includes(keyword);
-                    });
-                }
+                let isTriggered = keywords.length > 0 && keywords.some(keyword => 
+                    entry.exclude_recursion ? chatHistory.includes(keyword) : fullSearchText.includes(keyword)
+                );
 
                 if (isTriggered) {
                     triggeredEntries.add(entry);
@@ -129,18 +126,12 @@ export async function getCombinedWorldbookContent(context, apiSettings) {
             pendingGreenLights = nextPendingGreenLights;
         }
 
-        // --- 格式化并返回最终结果 ---
-        const finalContent = Array.from(triggeredEntries)
-            .map(entry => entry.content)
-            .filter(Boolean);
-
-        if (finalContent.length === 0) {
-            return '';
-        }
+        const finalContent = Array.from(triggeredEntries).map(entry => entry.content).filter(Boolean);
+        if (finalContent.length === 0) return '';
 
         const combinedContent = finalContent.join('\n\n---\n\n');
         
-        const limit = apiSettings?.worldbookCharLimit || 60000;
+        const limit = liveSettings.worldbookCharLimit;
         if (combinedContent.length > limit) {
             console.log(`[剧情优化大师] 世界书内容 (${combinedContent.length} chars) 超出限制 (${limit} chars)，将被截断。`);
             return combinedContent.substring(0, limit);
@@ -149,7 +140,7 @@ export async function getCombinedWorldbookContent(context, apiSettings) {
         return combinedContent;
 
     } catch (error) {
-        console.error(`[剧情优化大师] 处理递归世界书逻辑时出错:`, error);
+        console.error(`[剧情优化大师] 处理世界书逻辑时出错:`, error);
         return '';
     }
 }

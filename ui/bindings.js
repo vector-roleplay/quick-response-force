@@ -8,6 +8,29 @@ import { extensionName, defaultSettings } from '../utils/settings.js';
 import { fetchModels, testApiConnection } from '../core/api.js';
 
 /**
+ * 手动触发所有设置的保存。
+ * 这对于在关闭面板等事件时确保数据被保存非常有用。
+ */
+export function saveAllSettings() {
+    const panel = $('#qrf_settings_panel');
+    if (panel.length === 0) return;
+
+    console.log(`[${extensionName}] 手动触发所有设置的保存...`);
+    
+    // 触发所有相关输入元素的change事件，以利用现有的保存逻辑
+    panel.find('input[type="checkbox"], input[type="radio"], input[type="text"], input[type="password"], textarea, select').trigger('change.qrf');
+    
+    // 对于滑块，input事件可能更合适，但change也应在值改变后触发
+    panel.find('input[type="range"]').trigger('change.qrf');
+    
+    // 确保世界书条目也被保存
+    saveEnabledEntries();
+    
+    toastr.info('设置已自动保存。');
+}
+
+
+/**
  * 将下划线或连字符命名的字符串转换为驼峰命名。
  * e.g., 'qrf_api_url' -> 'qrfApiUrl'
  * @param {string} str - 输入字符串。
@@ -23,20 +46,27 @@ function toCamelCase(str) {
  * @param {string} apiMode - 当前选择的API模式 ('backend', 'frontend', 或 'google')。
  */
 function updateApiUrlVisibility(panel, apiMode) {
-    const apiUrlBlock = panel.find('#qrf_api_url_block');
+    const customApiSettings = panel.find('#qrf_custom_api_settings_block');
+    const tavernProfileSettings = panel.find('#qrf_tavern_api_profile_block');
     const apiUrlInput = panel.find('#qrf_api_url');
     
-    if (apiMode === 'google') {
-        apiUrlBlock.hide();
-        // 自动为Google设置固定的URL
-        const googleUrl = 'https://generativelanguage.googleapis.com';
-        if (apiUrlInput.val() !== googleUrl) {
-            apiUrlInput.val(googleUrl);
-            // 在加载时不应自动保存，让用户的change事件去触发保存
-            // saveSetting('apiUrl', googleUrl);
-        }
+    // Hide all blocks first
+    customApiSettings.hide();
+    tavernProfileSettings.hide();
+
+    if (apiMode === 'tavern') {
+        tavernProfileSettings.show();
     } else {
-        apiUrlBlock.show();
+        customApiSettings.show();
+        if (apiMode === 'google') {
+            panel.find('#qrf_api_url_block').hide();
+            const googleUrl = 'https://generativelanguage.googleapis.com';
+            if (apiUrlInput.val() !== googleUrl) {
+                apiUrlInput.val(googleUrl).trigger('change');
+            }
+        } else {
+            panel.find('#qrf_api_url_block').show();
+        }
     }
 }
 
@@ -55,9 +85,59 @@ function updateWorldbookSourceVisibility(panel, source) {
 }
 
 /**
- * 保存单个设置项到全局配置。
- * @param {string} key - 设置项的键（驼峰式）。
- * @param {*} value - 设置项的值。
+ * 加载SillyTavern的API连接预设到下拉菜单。
+ * @param {JQuery} panel - 设置面板的jQuery对象。
+ */
+async function loadTavernApiProfiles(panel) {
+    const select = panel.find('#qrf_tavern_api_profile_select');
+    const apiSettings = getMergedApiSettings();
+    const currentProfileId = apiSettings.tavernProfile;
+    
+    // 保存当前值，清空并添加默认选项
+    const currentValue = select.val();
+    select.empty().append(new Option('-- 请选择一个酒馆预设 --', ''));
+
+    try {
+        const tavernProfiles = getContext().extensionSettings?.connectionManager?.profiles || [];
+        if (!tavernProfiles || tavernProfiles.length === 0) {
+            select.append($('<option>', { value: '', text: '未找到酒馆预设', disabled: true }));
+            return;
+        }
+
+        let foundCurrentProfile = false;
+        tavernProfiles.forEach(profile => {
+            if (profile.api && profile.preset) { // 确保是有效的API预设
+                const option = $('<option>', {
+                    value: profile.id,
+                    text: profile.name || profile.id,
+                    selected: profile.id === currentProfileId
+                });
+                select.append(option);
+                if (profile.id === currentProfileId) {
+                    foundCurrentProfile = true;
+                }
+            }
+        });
+
+        // 如果之前保存的ID无效了，给出提示
+        if (currentProfileId && !foundCurrentProfile) {
+            toastr.warning(`之前选择的酒馆预设 "${currentProfileId}" 已不存在，请重新选择。`);
+            saveSetting('tavernProfile', '');
+        } else if (foundCurrentProfile) {
+             select.val(currentProfileId);
+        }
+
+    } catch (error) {
+        console.error(`[${extensionName}] 加载酒馆API预设失败:`, error);
+        toastr.error('无法加载酒馆API预设列表，请查看控制台。');
+    }
+}
+
+
+/**
+ * 根据选择的世界书来源，显示或隐藏手动选择区域。
+ * @param {JQuery} panel - 设置面板的jQuery对象。
+ * @param {string} source - 当前选择的来源 ('character' or 'manual')。
  */
 // ---- 新的、支持角色卡独立配置的设置保存/加载逻辑 ----
 
@@ -378,21 +458,27 @@ function saveCurrentPromptsAsPreset(panel) {
 function deleteSelectedPreset(panel) {
     const select = panel.find('#qrf_prompt_preset_select');
     const selectedName = select.val();
-    
+
     if (!selectedName) {
         toastr.warning('没有选择任何预设。');
         return;
     }
-    
+
     if (!confirm(`确定要删除预设 "${selectedName}" 吗？`)) {
         return;
     }
 
-    let presets = extension_settings[extensionName]?.promptPresets || [];
-    presets = presets.filter(p => p.name !== selectedName);
-    
-    saveSetting('promptPresets', presets);
-    toastr.success(`预设 "${selectedName}" 已被删除。`);
+    const presets = extension_settings[extensionName]?.promptPresets || [];
+    // 修正: 使用 splice 直接修改原数组，而不是创建新数组，以确保UI能正确更新
+    const indexToDelete = presets.findIndex(p => p.name === selectedName);
+
+    if (indexToDelete > -1) {
+        presets.splice(indexToDelete, 1);
+        saveSetting('promptPresets', presets);
+        toastr.success(`预设 "${selectedName}" 已被删除。`);
+    } else {
+        toastr.error('找不到要删除的预设，操作可能已过期。');
+    }
 
     // 刷新UI
     loadPromptPresets(panel);
@@ -530,6 +616,7 @@ function loadSettings(panel) {
 
     // 加载API和模型设置 (大部分是全局，但世界书相关是角色卡)
     panel.find(`input[name="qrf_api_mode"][value="${apiSettings.apiMode}"]`).prop('checked', true);
+    panel.find('#qrf_tavern_api_profile_select').val(apiSettings.tavernProfile); // 加载酒馆预设选择
     panel.find(`input[name="qrf_worldbook_source"][value="${apiSettings.worldbookSource || 'character'}"]`).prop('checked', true);
     panel.find('#qrf_worldbook_enabled').prop('checked', apiSettings.worldbookEnabled);
     panel.find('#qrf_api_url').val(apiSettings.apiUrl);
@@ -593,6 +680,9 @@ function loadSettings(panel) {
     loadWorldbooks(panel).then(() => {
         loadWorldbookEntries(panel);
     });
+    
+    // 加载酒馆API预设
+    loadTavernApiProfiles(panel);
 }
 
 /**
@@ -612,60 +702,65 @@ export function initializeBindings() {
         loadSettings(panel);
     });
 
-    // --- 事件绑定区域 (即时保存) ---
+    // --- 事件绑定区域 (智能保存) ---
 
-    panel.on('change.qrf', 'input[type="checkbox"], input[type="radio"], input[type="text"], input[type="password"], textarea, select:not(#qrf_model_select, #qrf_prompt_preset_select)', function() {
+    // 优化1: 创建一个统一的保存处理器，以避免代码重复
+    const handleSettingChange = function(element) {
+        const el = $(element);
         let key;
-        // 修正：为世界书来源单选框硬编码正确的键名，以彻底规避任何可能的通用逻辑解析错误
-        if (this.name === 'qrf_worldbook_source') {
+        
+        if (element.name === 'qrf_worldbook_source') {
             key = 'worldbookSource';
         } else {
-            // 对所有其他控件使用标准逻辑
-            key = toCamelCase((this.name || this.id).replace('qrf_', ''));
-        }
-        let value = this.type === 'checkbox' ? this.checked : $(this).val();
-
-        // 确保 `selectedWorldbooks` 总是数组
-        if (key === 'selectedWorldbooks' && !Array.isArray(value)) {
-            value = $(this).val() || [];
+            key = toCamelCase((element.name || element.id).replace('qrf_', ''));
         }
         
-        saveSetting(key, value);
+        let value = element.type === 'checkbox' ? element.checked : el.val();
 
-        if (this.name === 'qrf_api_mode') {
+        if (key === 'selectedWorldbooks' && !Array.isArray(value)) {
+            value = el.val() || [];
+        }
+        
+        const floatKeys = ['temperature', 'top_p', 'presence_penalty', 'frequency_penalty', 'rateMain', 'ratePersonal', 'rateErotic', 'rateCuckold'];
+        if (floatKeys.includes(key) && value !== '') {
+            value = parseFloat(value);
+        } else if (element.type === 'range' || element.type === 'number') {
+            if (value !== '') value = parseInt(value, 10);
+        }
+        
+        if (value !== '' || element.type === 'checkbox') {
+             saveSetting(key, value);
+        }
+
+        if (element.name === 'qrf_api_mode') {
             updateApiUrlVisibility(panel, value);
         }
-        if (this.name === 'qrf_worldbook_source') {
+        if (element.name === 'qrf_worldbook_source') {
             updateWorldbookSourceVisibility(panel, value);
-            // 切换模式时，重新加载条目列表。新逻辑将直接从DOM读取正确的模式。
             loadWorldbookEntries(panel);
         }
+    };
+
+    // 优化2: 统一所有输入控件的事件绑定，实现更简洁、更一致的实时保存
+    const allInputSelectors = [
+        'input[type="checkbox"]', 'input[type="radio"]', 'select:not(#qrf_model_select)',
+        'input[type="text"]', 'input[type="password"]', 'textarea',
+        'input[type="range"]', 'input[type="number"]'
+    ].join(', ');
+
+    // 使用 'input' 和 'change' 事件确保覆盖所有交互场景：
+    // - 'input' 实时捕捉打字、拖动等操作。
+    // - 'change' 捕捉点击选择、粘贴、自动填充等操作。
+    panel.on('input.qrf change.qrf', allInputSelectors, function() {
+        handleSettingChange(this);
     });
 
+    // 特殊处理模型选择下拉框
     panel.on('change.qrf', '#qrf_model_select', function() {
         const selectedModel = $(this).val();
         if (selectedModel) {
+            // 手动触发模型输入框的change，会由上面的监听器捕获并保存
             panel.find('#qrf_model').val(selectedModel).trigger('change');
-        }
-    });
-
-    // 合并 range 和 number 类型的输入框事件处理
-    panel.on('change.qrf', 'input[type="range"], input[type="number"]', function() {
-        const key = toCamelCase(this.id.replace('qrf_', ''));
-        const value = $(this).val();
-        
-        // 扩展浮点数键的列表以包括新的速率设置
-        const floatKeys = [
-            'temperature', 'top_p', 'presence_penalty', 'frequency_penalty',
-            'rateMain', 'ratePersonal', 'rateErotic', 'rateCuckold'
-        ];
-
-        // 检查当前输入的键是否应作为浮点数处理
-        const isFloat = floatKeys.includes(key);
-
-        // 保存设置，根据类型转换数值
-        if (this.value !== '') { // 避免保存空字符串
-             saveSetting(key, isFloat ? parseFloat(value) : parseInt(value, 10));
         }
     });
 
@@ -673,11 +768,30 @@ export function initializeBindings() {
 
     panel.find('#qrf_fetch_models').on('click', async function () {
         const button = $(this);
+        // 修正: 从UI实时获取apiMode，以进行正确的逻辑判断
+        const apiMode = panel.find('input[name="qrf_api_mode"]:checked').val();
+
+        if (apiMode === 'tavern') {
+            toastr.info('在“使用酒馆连接预设”模式下，模型已在预设中定义，无需单独获取。');
+            return;
+        }
+
         button.prop('disabled', true).find('i').addClass('fa-spin');
-        const currentApiSettings = { ...extension_settings[extensionName].apiSettings, model: panel.find('#qrf_model').val() };
+        
+        // 修正: 确保传递给fetchModels的设置是最新的
+        const apiSettings = getMergedApiSettings();
+        const currentApiSettings = {
+            ...apiSettings,
+            apiUrl: panel.find('#qrf_api_url').val(),
+            apiKey: panel.find('#qrf_api_key').val(),
+            model: panel.find('#qrf_model').val(),
+            apiMode: apiMode // 传递实时获取的apiMode
+        };
+
         const models = await fetchModels(currentApiSettings);
         const modelSelect = panel.find('#qrf_model_select');
         modelSelect.empty().append(new Option('请选择一个模型', ''));
+        
         if (models && models.length > 0) {
             models.forEach(model => modelSelect.append(new Option(model.id || model.model, model.id || model.model)));
             if (currentApiSettings.model && modelSelect.find(`option[value="${currentApiSettings.model}"]`).length > 0) {
@@ -686,15 +800,37 @@ export function initializeBindings() {
         } else {
              toastr.info('未能获取到模型列表，您仍然可以手动输入模型名称。');
         }
+        
         button.prop('disabled', false).find('i').removeClass('fa-spin');
     });
 
     panel.find('#qrf_test_api').on('click', async function () {
         const button = $(this);
         button.prop('disabled', true).find('i').addClass('fa-spin');
-        const currentApiSettings = { ...extension_settings[extensionName].apiSettings, model: panel.find('#qrf_model').val() };
+        const apiSettings = getMergedApiSettings();
+        // 修正: 直接从UI读取最新的API URL, Key和模型, 避免因设置未保存导致测试失败的问题
+        const currentApiSettings = {
+            ...apiSettings,
+            apiUrl: panel.find('#qrf_api_url').val(),
+            apiKey: panel.find('#qrf_api_key').val(),
+            model: panel.find('#qrf_model').val(),
+            apiMode: panel.find('input[name="qrf_api_mode"]:checked').val(), // 实时获取当前API模式
+            // 确保测试时也传递 tavernProfile
+            tavernProfile: panel.find('#qrf_tavern_api_profile_select').val()
+        };
         await testApiConnection(currentApiSettings);
         button.prop('disabled', false).find('i').removeClass('fa-spin');
+    });
+
+    // 绑定酒馆API预设刷新按钮
+    panel.on('click.qrf', '#qrf_refresh_tavern_api_profiles', () => {
+        loadTavernApiProfiles(panel);
+    });
+
+    // 绑定酒馆API预设选择事件
+    panel.on('change.qrf', '#qrf_tavern_api_profile_select', function() {
+        const value = $(this).val();
+        saveSetting('tavernProfile', value);
     });
 
     // --- 提示词预设功能 ---

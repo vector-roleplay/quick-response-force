@@ -259,6 +259,29 @@
     accent-color: var(--primary, #00BFFF);
 }
 
+/* API模式 - 2x2 网格布局 */
+#qrf_settings_panel .qrf_api_mode_grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px; /* 网格间距 */
+    padding: 15px;
+}
+#qrf_settings_panel .qrf_api_mode_grid .qrf_radio_option {
+    display: flex;
+    align-items: center;
+    background-color: var(--background-color-tertiary, #2a2a2a);
+    padding: 10px;
+    border-radius: 6px;
+    transition: background-color 0.2s ease;
+}
+#qrf_settings_panel .qrf_api_mode_grid .qrf_radio_option:hover {
+    background-color: var(--background-color-hover, #3a3a3a);
+}
+#qrf_settings_panel .qrf_api_mode_grid .qrf_radio_option label {
+    margin-bottom: 0;
+    width: 100%;
+}
+
 
 /* 10. 世界书条目列表 */
 .qrf_worldbook_entry_list {

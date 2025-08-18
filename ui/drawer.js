@@ -2,7 +2,7 @@
 // 由Cline移植并重构
 
 import { extensionName } from '../utils/settings.js';
-import { initializeBindings } from './bindings.js';
+import { initializeBindings, saveAllSettings } from './bindings.js';
 
 const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`;
 
@@ -37,7 +37,7 @@ export async function createDrawer() {
 
         // 初始化UI数据绑定和事件
         initializeBindings();
-
+        
         console.log(`[${extensionName}] 设置面板已成功创建。`);
 
     } catch (error) {

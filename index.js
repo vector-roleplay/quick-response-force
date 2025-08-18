@@ -74,7 +74,19 @@ async function onGenerationAfterCommands(type, params, dryRun) {
         },
     };
 
-    if (!settings.enabled || !settings.apiSettings?.apiUrl) {
+    // [最终修复] 核心逻辑现在完全模仿“测试”按钮的行为，在运行时从UI实时获取所有关键API设置，
+    // 从而根除因状态不同步导致的所有问题。
+    const panel = $('#qrf_settings_panel');
+    if (panel.length > 0) {
+        // 直接从DOM元素读取最新的、用户可见的设置
+        settings.apiSettings.apiMode = panel.find('input[name="qrf_api_mode"]:checked').val();
+        settings.apiSettings.apiUrl = panel.find('#qrf_api_url').val();
+        settings.apiSettings.apiKey = panel.find('#qrf_api_key').val();
+        settings.apiSettings.model = panel.find('#qrf_model').val();
+        settings.apiSettings.tavernProfile = panel.find('#qrf_tavern_api_profile_select').val();
+    }
+
+    if (!settings.enabled || (settings.apiSettings.apiMode !== 'tavern' && !settings.apiSettings.apiUrl)) {
         return;
     }
 
@@ -209,17 +221,32 @@ function loadPluginStyles() {
 }
 
 jQuery(async () => {
-    // 修复：执行深度合并，确保新设置（如worldbookCharLimit）能被应用到现有配置中
-    const currentSettings = extension_settings[extension_name] || {};
-    const newSettings = {
-        ...defaultSettings,
-        ...currentSettings,
-        apiSettings: {
-            ...defaultSettings.apiSettings,
-            ...(currentSettings.apiSettings || {}),
-        },
-    };
-    extension_settings[extension_name] = newSettings;
+    // [彻底修复] 执行一个健壮的、非破坏性的设置初始化。
+    // 此方法会保留所有用户已保存的设置，仅当设置项不存在时才从默认值中添加。
+    if (!extension_settings[extension_name]) {
+        extension_settings[extension_name] = {};
+    }
+    const settings = extension_settings[extension_name];
+
+    // 确保 apiSettings 子对象存在
+    if (!settings.apiSettings) {
+        settings.apiSettings = {};
+    }
+
+    // 1. 遍历并应用顶层设置的默认值
+    for (const key in defaultSettings) {
+        if (key !== 'apiSettings' && settings[key] === undefined) {
+            settings[key] = defaultSettings[key];
+        }
+    }
+
+    // 2. 遍历并应用 apiSettings 的默认值
+    const defaultApiSettings = defaultSettings.apiSettings;
+    for (const key in defaultApiSettings) {
+        if (settings.apiSettings[key] === undefined) {
+            settings.apiSettings[key] = defaultApiSettings[key];
+        }
+    }
 
     const intervalId = setInterval(async () => {
         if ($('#extensions_settings').length > 0) {

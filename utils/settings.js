@@ -8,10 +8,11 @@ export const defaultSettings = {
     promptPresets: [],
     lastUsedPresetName: '', // 新增：用于存储上次使用的预设名称
     apiSettings: {
-        apiMode: 'frontend', // 'backend', 'frontend', or 'google'
+        apiMode: 'frontend', // 'backend', 'frontend', 'google', 'tavern'
         apiUrl: '',
         apiKey: '',
         model: 'gpt-4-turbo',
+        tavernProfile: '',
         max_tokens: 20000,
         temperature: 0.7,
         top_p: 0.95,

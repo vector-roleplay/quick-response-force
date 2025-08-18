@@ -83,7 +83,7 @@ async function callApiViaBackend(apiSettings, messages) {
 /**
  * 主API调用入口，根据设置选择不同的模式
  */
-export async function callInterceptionApi(userMessage, contextMessages, apiSettings, worldbookContent) {
+export async function callInterceptionApi(userMessage, contextMessages, apiSettings, worldbookContent, tableDataContent) {
     if (!apiSettings.apiUrl) {
         console.error(`[${extensionName}] API URL 未配置。`);
         return null;
@@ -91,10 +91,15 @@ export async function callInterceptionApi(userMessage, contextMessages, apiSetti
 
     const replacePlaceholders = (text) => {
         if (typeof text !== 'string') return '';
+        // 替换 $1 为世界书内容
         if (apiSettings.worldbookEnabled) {
-            const replacement = worldbookContent ? `\n<worldbook_context>\n${worldbookContent}\n</worldbook_context>\n` : '';
-            text = text.replace(/(?<!\\)\$1/g, replacement);
+            const worldbookReplacement = worldbookContent ? `\n<worldbook_context>\n${worldbookContent}\n</worldbook_context>\n` : '';
+            text = text.replace(/(?<!\\)\$1/g, worldbookReplacement);
         }
+        // [新增] 替换 $5 为表格数据内容
+        const tableDataReplacement = tableDataContent ? `\n<table_data_context>\n${tableDataContent}\n</table_data_context>\n` : '';
+        text = text.replace(/(?<!\\)\$5/g, tableDataReplacement);
+        
         return text;
     };
 

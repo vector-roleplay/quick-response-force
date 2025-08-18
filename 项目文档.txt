@@ -1,5 +1,110 @@
 # 项目更新文档
 
+## [功能增强] 集成记忆插件(st-memory-enhancement)的表格数据
+- **任务描述**: 优化插件，使其能够读取 `st-memory-enhancement` 插件保存在角色聊天记录中的表格数据，并将这些数据作为一个新的上下文注入到提示词中，供AI参考。
+- **核心需求**:
+    1.  通过 `st-memory-enhancement` 插件暴露的全局接口 `ext_exportAllTablesAsJson()` 获取所有表格的JSON数据。
+    2.  将原始的、复杂的JSON数据转换为一种对大型语言模型（LLM）更友好的、可读的文本格式。
+    3.  新增一个占位符 `$5`，用于在提示词中注入这份格式化后的表格数据。
+    4.  确保替换逻辑能够正确处理 `$5` 这样的特殊字符。
+- **解决方案**:
+    1.  **实现数据获取与格式化 (`index.js`)**:
+        -   在 `onGenerationAfterCommands` 函数中，增加了对 `window.stMemoryEnhancement.ext_exportAllTablesAsJson` 的调用，并用 `try...catch` 块保证了调用的健壮性。
+        -   新增了一个辅助函数 `formatTableDataForLLM`，该函数负责遍历获取到的JSON数据，将其转换为一个结构清晰、带有标题和字段的Markdown风格的文本摘要。
+        -   将格式化后的文本摘要作为一个新的参数 `tableDataContent`，传递给核心API调用函数 `callInterceptionApi`。
+    2.  **重构核心API以实现占位符替换 (`core/api.js`)**:
+        -   修改了 `callInterceptionApi` 函数的签名，使其能够接收 `tableDataContent` 参数。
+        -   在内部的 `replacePlaceholders` 辅助函数中，模仿了处理世界书占位符 `$1` 的逻辑。
+        -   新增了一段代码，专门用于将提示词中的 `$5` 占位符替换为传入的、格式化后的 `tableDataContent`。
+- **操作代码**:
+    - `index.js` (数据获取与格式化):
+        ```javascript
+        // 新增格式化函数
+        function formatTableDataForLLM(jsonData) {
+            // ... (实现将JSON转换为可读文本的逻辑) ...
+        }
+
+        // 在 onGenerationAfterCommands 中
+        const tableDataJson = window.stMemoryEnhancement.ext_exportAllTablesAsJson();
+        const tableDataContent = formatTableDataForLLM(tableDataJson);
+        // ...
+        const processedMessage = await callInterceptionApi(..., tableDataContent);
+        ```
+    - `core/api.js` (占位符替换):
+        ```javascript
+        export async function callInterceptionApi(..., tableDataContent) {
+            // ...
+            const replacePlaceholders = (text) => {
+                // ... (处理 $1 的现有逻辑) ...
+                
+                // 新增逻辑:
+                const tableDataReplacement = tableDataContent ? `\n<table_data_context>\n${tableDataContent}\n</table_data_context>\n` : '';
+                text = text.replace(/(?<!\\)\$5/g, tableDataReplacement);
+                
+                return text;
+            };
+            // ...
+        }
+        ```
+- **效果**: 插件现在具备了强大的跨插件数据整合能力。它可以在运行时动态地将 `st-memory-enhancement` 插件中的结构化记忆，以一种AI易于理解的格式，无缝地注入到自己的处理流程中。这极大地丰富了AI决策时的上下文信息，显著提升了剧情推演的连贯性和深度。
+
+## [UI修复] 优化开关按钮的对齐样式
+- **问题描述**: 用户反馈，在设置界面中，“插件总开关”和“启用世界书”这两个开关与其标签的对齐方式看起来很奇怪。
+- **根本原因**: 包含开关的flex容器 `.qrf_settings_block` 使用了 `justify-content: space-between` 属性。当容器内只有两个元素（标签和开关）时，这两个元素会被推到容器的两端，导致它们之间产生过大的、不自然的间距。
+- **解决方案**:
+    1.  **定位问题样式**: 确认问题存在于 `style.css` 文件中 `.qrf_settings_block` 的flex布局规则。
+    2.  **应用新的flexbox策略**:
+        - 修改了 `label:not(.toggle-switch)` 的样式，为其添加 `flex-grow: 1`。这使得标签元素会主动占据所有可用的剩余空间。
+        - 为 `.toggle-switch` 元素添加了 `margin-left: 20px`，确保它与左侧的标签之间有固定的间距。
+- **操作代码**:
+    - `style.css`:
+        ```css
+        #qrf_settings_panel .qrf_settings_block label:not(.toggle-switch) {
+            flex-grow: 1; /* 让标签占据多余空间 */
+            min-width: 120px;
+            font-size: 0.9em;
+        }
+
+        #qrf_settings_panel .qrf_settings_block .toggle-switch {
+            flex-shrink: 0; /* 防止开关收缩 */
+            margin-left: 20px; /* 在其左侧增加固定间距 */
+        }
+        ```
+- **效果**: 成功修复了开关按钮的对齐问题。现在，开关会紧跟在其对应的标签右侧，而不是被推到容器的另一端，布局更加紧凑、自然和美观。
+
+## [BUG修复] 修复插件UI样式影响酒馆全局界面的问题
+
+- **问题描述**: 插件设置界面中的UI元素（如输入框、滑动开关、滑块等）的自定义颜色和样式，会意外地应用到SillyTavern的全局界面上，干扰了其他部分的正常显示。
+- **根本原因**: `style.css` 文件中存在多个过于宽泛的CSS选择器。例如，`.settings-group`, `.text_pole`, `.toggle-switch`, `input[type="range"]` 等选择器会匹配整个HTML文档中的所有相应元素，而不仅仅是本插件内部的元素，从而导致样式“泄露”。
+- **解决方案**:
+    1.  **限定CSS作用域**: 对 `style.css` 文件进行了全面的审查和修改。
+    2.  **添加父级ID选择器**: 为所有可能产生冲突的CSS规则，都增加了父级ID选择器 `#qrf_settings_panel` 作为前缀。例如，将 `.settings-group` 修改为 `#qrf_settings_panel .settings-group`。
+    3.  **确保隔离**: 这一修改确保了所有的自定义样式都只在ID为 `qrf_settings_panel` 的元素（即插件的设置面板）内部生效，无法影响到面板之外的任何SillyTavern原生UI组件。
+- **操作代码**:
+    - `style.css`:
+        ```css
+        /* 将所有通用选择器限定在插件面板内 */
+        
+        /* 例如，旧规则: */
+        /* .settings-group { ... } */
+        
+        /* 新规则: */
+        #qrf_settings_panel .settings-group { ... }
+
+        /* 例如，旧规则: */
+        /* .text_pole { ... } */
+
+        /* 新规则: */
+        #qrf_settings_panel .text_pole { ... }
+
+        /* 例如，旧规则: */
+        /* input[type="range"] { ... } */
+
+        /* 新规则: */
+        #qrf_settings_panel input[type="range"] { ... }
+        ```
+- **效果**: 彻底解决了UI样式全局污染的问题。插件的设置界面现在拥有完全独立的样式作用域，其外观调整不再对SillyTavern主程序的任何其他部分产生副作用，保证了整体的视觉一致性和稳定性。
+
 ## [BUG修复] 修复API测试功能未传递高级参数的问题
 - **问题描述**: 用户反馈，在UI上调整了 `Top P`、`Presence Penalty` 和 `Frequency Penalty` 等滑块后，点击“测试API连接”按钮时，这些参数并未实际生效。
 - **根本原因**: `core/api.js` 文件中的 `testApiConnection` 函数在构建API请求时，虽然从UI正确收集了这些参数的值，但在随后的 `$.ajax` (后端模式) 和 `fetch` (前端模式) 调用中，请求体 (`data` 或 `body`) 中硬编码了固定的 `temperature: 0.1`，而完全忽略了从 `apiSettings` 对象中传入的其他高级参数。
@@ -425,3 +530,20 @@
         <path>论坛发布帖子.md</path>
         <content>
         ... (帖子内容已省略) ...
+<environment_details>
+# VSCode Visible Files
+quick-response-force/core/api.js
+
+# VSCode Open Tabs
+quick-response-force/index.js
+quick-response-force/core/api.js
+
+# Current Time
+2025/8/18 下午6:03:39 (Asia/Shanghai, UTC+8:00)
+
+# Context Window Usage
+0 / 1,048.576K tokens used (0%)
+
+# Current Mode
+ACT MODE
+</environment_details>

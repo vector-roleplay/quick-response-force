@@ -12,6 +12,51 @@ import { defaultSettings } from './utils/settings.js';
 const extension_name = 'quick-response-force';
 let isProcessing = false;
 
+/**
+ * 将从 st-memory-enhancement 获取的原始表格JSON数据转换为更适合LLM读取的文本格式。
+ * @param {object} jsonData - ext_exportAllTablesAsJson 返回的JSON对象。
+ * @returns {string} - 格式化后的文本字符串。
+ */
+function formatTableDataForLLM(jsonData) {
+    if (!jsonData || typeof jsonData !== 'object' || Object.keys(jsonData).length === 0) {
+        return '当前无任何可用的表格数据。';
+    }
+
+    let output = '以下是当前角色聊天记录中，由st-memory-enhancement插件保存的全部表格数据：\n';
+
+    for (const sheetId in jsonData) {
+        if (Object.prototype.hasOwnProperty.call(jsonData, sheetId)) {
+            const sheet = jsonData[sheetId];
+            // 确保表格有名称，且内容至少包含表头和一行数据
+            if (sheet && sheet.name && sheet.content && sheet.content.length > 1) {
+                output += `\n## 表格: ${sheet.name}\n`;
+                const headers = sheet.content[0].slice(1); // 第一行是表头，第一个元素通常为空
+                const rows = sheet.content.slice(1);
+
+                rows.forEach((row, rowIndex) => {
+                    const rowData = row.slice(1);
+                    let rowOutput = '';
+                    let hasContent = false;
+                    headers.forEach((header, index) => {
+                        const cellValue = rowData[index];
+                        if (cellValue !== null && cellValue !== undefined && String(cellValue).trim() !== '') {
+                            rowOutput += `  - ${header}: ${cellValue}\n`;
+                            hasContent = true;
+                        }
+                    });
+
+                    if (hasContent) {
+                        output += `\n### ${sheet.name} - 第 ${rowIndex + 1} 条记录\n${rowOutput}`;
+                    }
+                });
+            }
+        }
+    }
+    output += '\n--- 表格数据结束 ---\n';
+    return output;
+}
+
+
 async function onGenerationAfterCommands(type, params, dryRun) {
     // 根据用户要求，不再处理“重新生成”，只处理新输入
     if (type === 'regenerate' || isProcessing || dryRun) {
@@ -75,11 +120,27 @@ async function onGenerationAfterCommands(type, params, dryRun) {
 
         // 在调用API前，执行sulv占位符替换
         let finalApiSettings = { ...apiSettings };
+        
+        // [新增] 从记忆插件获取表格数据，格式化后注入到$5占位符
+        let tableDataContent = '';
+        try {
+            if (window.stMemoryEnhancement && typeof window.stMemoryEnhancement.ext_exportAllTablesAsJson === 'function') {
+                const tableDataJson = window.stMemoryEnhancement.ext_exportAllTablesAsJson();
+                tableDataContent = formatTableDataForLLM(tableDataJson); // 调用新函数进行格式化
+            } else {
+                tableDataContent = '依赖的“记忆增强”插件未加载或版本不兼容。';
+            }
+        } catch (error) {
+            console.error(`[${extension_name}] 处理记忆增强插件数据时出错:`, error);
+            tableDataContent = '{"error": "加载表格数据时发生错误"}';
+        }
+        
         const replacements = {
             'sulv1': finalApiSettings.rateMain,
             'sulv2': finalApiSettings.ratePersonal,
             'sulv3': finalApiSettings.rateErotic,
-            'sulv4': finalApiSettings.rateCuckold
+            'sulv4': finalApiSettings.rateCuckold,
+            '$5': tableDataContent, // 将格式化后的表格文本赋给$5
         };
 
         // 创建一个新的对象来存储替换后的提示词，以避免直接修改原始设置对象
@@ -100,8 +161,8 @@ async function onGenerationAfterCommands(type, params, dryRun) {
         // 将处理过的提示词合并回最终的API设置中
         finalApiSettings = { ...finalApiSettings, ...processedPrompts };
         
-        // 调用API
-        const processedMessage = await callInterceptionApi(userMessage, slicedContext, finalApiSettings, worldbookContent);
+        // 调用API，[新增] 传入格式化后的 tableDataContent
+        const processedMessage = await callInterceptionApi(userMessage, slicedContext, finalApiSettings, worldbookContent, tableDataContent);
 
         if (processedMessage) {
             // 根据新的两步式流程，`processedMessage`现在是分析AI生成的完整`<plot>`模块。

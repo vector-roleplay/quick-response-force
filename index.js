@@ -57,88 +57,63 @@ function formatTableDataForLLM(jsonData) {
 }
 
 
-async function onGenerationAfterCommands(type, params, dryRun) {
-    // 根据用户要求，不再处理“重新生成”，只处理新输入
-    if (type === 'regenerate' || isProcessing || dryRun) {
-        return;
-    }
-
-    // 在每次执行前，都重新进行一次深度合并，以获取最新、最完整的设置状态
-    const currentSettings = extension_settings[extension_name] || {};
-    const settings = {
-        ...defaultSettings,
-        ...currentSettings,
-        apiSettings: {
-            ...defaultSettings.apiSettings,
-            ...(currentSettings.apiSettings || {}),
-        },
-    };
-
-    // [最终修复] 核心逻辑现在完全模仿“测试”按钮的行为，在运行时从UI实时获取所有关键API设置，
-    // 从而根除因状态不同步导致的所有问题。
-    const panel = $('#qrf_settings_panel');
-    if (panel.length > 0) {
-        // 直接从DOM元素读取最新的、用户可见的设置
-        settings.apiSettings.apiMode = panel.find('input[name="qrf_api_mode"]:checked').val();
-        settings.apiSettings.apiUrl = panel.find('#qrf_api_url').val();
-        settings.apiSettings.apiKey = panel.find('#qrf_api_key').val();
-        settings.apiSettings.model = panel.find('#qrf_model').val();
-        settings.apiSettings.tavernProfile = panel.find('#qrf_tavern_api_profile_select').val();
-    }
-
-    if (!settings.enabled || (settings.apiSettings.apiMode !== 'tavern' && !settings.apiSettings.apiUrl)) {
-        return;
-    }
-
-    isProcessing = true;
-    let $toast = toastr.info('正在规划剧情...', '剧情规划大师', { timeOut: 0, extendedTimeOut: 0 });
-
+/**
+ * [重构] 核心优化逻辑，可被多处调用。
+ * @param {string} userMessage - 需要被优化的用户输入文本。
+ * @returns {Promise<string|null>} - 返回优化后的完整消息体，如果失败或跳过则返回null。
+ */
+async function runOptimizationLogic(userMessage) {
+    let $toast = null;
     try {
-        const context = getContext();
-        const character = characters[this_chid];
-
-        // 深度合并设置：以刚刚刷新过的全局设置为基础，用角色卡设置覆盖
-        const characterSettings = character?.data?.extensions?.[extension_name]?.apiSettings || {};
-        const apiSettings = {
-            ...settings.apiSettings,
-            ...characterSettings,
+        // 在每次执行前，都重新进行一次深度合并，以获取最新、最完整的设置状态
+        const currentSettings = extension_settings[extension_name] || {};
+        const settings = {
+            ...defaultSettings,
+            ...currentSettings,
+            apiSettings: {
+                ...defaultSettings.apiSettings,
+                ...(currentSettings.apiSettings || {}),
+            },
         };
 
-        // 只处理来自主输入框的新消息
-        const userMessage = $('#send_textarea').val();
-
-        if (!userMessage) {
-            // 如果输入框为空，则不进行任何操作
-            if ($toast) toastr.clear($toast);
-            return;
+        const panel = $('#qrf_settings_panel');
+        if (panel.length > 0) {
+            settings.apiSettings.apiMode = panel.find('input[name="qrf_api_mode"]:checked').val();
+            settings.apiSettings.apiUrl = panel.find('#qrf_api_url').val();
+            settings.apiSettings.apiKey = panel.find('#qrf_api_key').val();
+            settings.apiSettings.model = panel.find('#qrf_model').val();
+            settings.apiSettings.tavernProfile = panel.find('#qrf_tavern_api_profile_select').val();
+            settings.minLength = parseInt(panel.find('#qrf_min_length').val(), 10) || 0;
         }
 
-        // 提取上下文
+        if (!settings.enabled || (settings.apiSettings.apiMode !== 'tavern' && !settings.apiSettings.apiUrl)) {
+            return null; // 插件未启用，直接返回
+        }
+
+        $toast = toastr.info('正在规划剧情...', '剧情规划大师', { timeOut: 0, extendedTimeOut: 0 });
+
+        const context = getContext();
+        const character = characters[this_chid];
+        const characterSettings = character?.data?.extensions?.[extension_name]?.apiSettings || {};
+        const apiSettings = { ...settings.apiSettings, ...characterSettings };
+
         const contextTurnCount = apiSettings.contextTurnCount ?? 1;
         let slicedContext = [];
         if (contextTurnCount > 0) {
             const history = context.chat.slice(-contextTurnCount);
-            slicedContext = history.map(msg => ({
-                role: msg.is_user ? 'user' : 'assistant',
-                content: msg.mes
-            }));
+            slicedContext = history.map(msg => ({ role: msg.is_user ? 'user' : 'assistant', content: msg.mes }));
         }
 
-        // 提取世界书
         let worldbookContent = '';
         if (apiSettings.worldbookEnabled) {
             worldbookContent = await getCombinedWorldbookContent(context, apiSettings);
         }
 
-        // 在调用API前，执行sulv占位符替换
-        let finalApiSettings = { ...apiSettings };
-        
-        // [新增] 从记忆插件获取表格数据，格式化后注入到$5占位符
         let tableDataContent = '';
         try {
             if (window.stMemoryEnhancement && typeof window.stMemoryEnhancement.ext_exportAllTablesAsJson === 'function') {
                 const tableDataJson = window.stMemoryEnhancement.ext_exportAllTablesAsJson();
-                tableDataContent = formatTableDataForLLM(tableDataJson); // 调用新函数进行格式化
+                tableDataContent = formatTableDataForLLM(tableDataJson);
             } else {
                 tableDataContent = '依赖的“记忆增强”插件未加载或版本不兼容。';
             }
@@ -146,20 +121,19 @@ async function onGenerationAfterCommands(type, params, dryRun) {
             console.error(`[${extension_name}] 处理记忆增强插件数据时出错:`, error);
             tableDataContent = '{"error": "加载表格数据时发生错误"}';
         }
-        
+
         const replacements = {
-            'sulv1': finalApiSettings.rateMain,
-            'sulv2': finalApiSettings.ratePersonal,
-            'sulv3': finalApiSettings.rateErotic,
-            'sulv4': finalApiSettings.rateCuckold,
-            '$5': tableDataContent, // 将格式化后的表格文本赋给$5
+            'sulv1': apiSettings.rateMain,
+            'sulv2': apiSettings.ratePersonal,
+            'sulv3': apiSettings.rateErotic,
+            'sulv4': apiSettings.rateCuckold,
+            '$5': tableDataContent,
         };
 
-        // 创建一个新的对象来存储替换后的提示词，以避免直接修改原始设置对象
         const processedPrompts = {
-            mainPrompt: finalApiSettings.mainPrompt,
-            systemPrompt: finalApiSettings.systemPrompt,
-            finalSystemDirective: finalApiSettings.finalSystemDirective
+            mainPrompt: apiSettings.mainPrompt,
+            systemPrompt: apiSettings.systemPrompt,
+            finalSystemDirective: apiSettings.finalSystemDirective
         };
 
         for (const key in replacements) {
@@ -169,40 +143,82 @@ async function onGenerationAfterCommands(type, params, dryRun) {
             processedPrompts.systemPrompt = processedPrompts.systemPrompt.replace(regex, value);
             processedPrompts.finalSystemDirective = processedPrompts.finalSystemDirective.replace(regex, value);
         }
-        
-        // 将处理过的提示词合并回最终的API设置中
-        finalApiSettings = { ...finalApiSettings, ...processedPrompts };
-        
-        // 调用API，[新增] 传入格式化后的 tableDataContent
-        const processedMessage = await callInterceptionApi(userMessage, slicedContext, finalApiSettings, worldbookContent, tableDataContent);
+
+        const finalApiSettings = { ...apiSettings, ...processedPrompts };
+        const minLength = settings.minLength || 0;
+        let processedMessage = null;
+        const maxRetries = 3;
+
+        if (minLength > 0) {
+            for (let i = 0; i < maxRetries; i++) {
+                $toast.find('.toastr-message').text(`正在规划剧情... (尝试 ${i + 1}/${maxRetries})`);
+                const tempMessage = await callInterceptionApi(userMessage, slicedContext, finalApiSettings, worldbookContent, tableDataContent);
+                if (tempMessage && tempMessage.length >= minLength) {
+                    processedMessage = tempMessage;
+                    if ($toast) toastr.clear($toast);
+                    toastr.success(`剧情规划成功 (第 ${i + 1} 次尝试)。`, '成功');
+                    break;
+                }
+                if (i < maxRetries - 1) {
+                    toastr.warning(`回复过短，准备重试...`, '剧情规划大师', { timeOut: 2000 });
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
+        } else {
+            processedMessage = await callInterceptionApi(userMessage, slicedContext, finalApiSettings, worldbookContent, tableDataContent);
+        }
 
         if (processedMessage) {
-            // 根据新的两步式流程，`processedMessage`现在是分析AI生成的完整`<plot>`模块。
-            // 我们将用户的原始输入与这个plot模块组合，并使用用户在设置中自定义的指令来包裹它们。
             const finalSystemDirective = finalApiSettings.finalSystemDirective || '[SYSTEM_DIRECTIVE: You are a storyteller. The following <plot> block is your absolute script for this turn. You MUST follow the <directive> within it to generate the story.]';
             const finalMessage = `${userMessage}\n\n${finalSystemDirective}\n${processedMessage}`;
-
-            // 核心修改：只更新文本框内容，不自动点击发送
-            $('#send_textarea').val(finalMessage);
-            
-            // 触发input事件，确保SillyTavern的其他部分能感知到变化
-            $('#send_textarea').trigger('input');
-
             if ($toast) toastr.clear($toast);
-            toastr.success('剧情规划大师已完成规划。', '规划成功');
+            if (minLength <= 0) {
+                toastr.success('剧情规划大师已完成规划。', '规划成功');
+            }
+            return finalMessage;
         } else {
-            // 如果API没有返回，也要清除提示
             if ($toast) toastr.clear($toast);
+            if (minLength > 0) {
+                toastr.error(`重试 ${maxRetries} 次后回复依然过短，操作已取消。`, '规划失败');
+            }
+            return null;
         }
-        // 如果API没有返回，我们什么也不做，将原始消息保留在输入框中。
-        // 删除了所有自动点击 $('#send_button').click() 的逻辑。
 
     } catch (error) {
-        console.error(`[${extension_name}] 处理 onGenerationAfterCommands 事件时出错:`, error);
+        console.error(`[${extension_name}] 在核心优化逻辑中发生错误:`, error);
         if ($toast) toastr.clear($toast);
         toastr.error('剧情规划大师在处理时发生错误。', '规划失败');
+        return null;
+    }
+}
+
+
+async function onGenerationAfterCommands(type, params, dryRun) {
+    if (type === 'regenerate' || isProcessing || dryRun) {
+        return;
+    }
+
+    // 仅处理来自主输入框的指令，脚本指令将由函数拦截器处理
+    const textInBox = $('#send_textarea').val();
+    if (!textInBox || textInBox.trim().length === 0) {
+        return;
+    }
+    
+    isProcessing = true;
+    try {
+        const finalMessage = await runOptimizationLogic(textInBox);
+
+        if (finalMessage) {
+            $('#send_textarea').val(finalMessage);
+            $('#send_textarea').trigger('input');
+        } else {
+            // 失败时恢复原始输入
+            $('#send_textarea').val(textInBox);
+            $('#send_textarea').trigger('input');
+        }
+    } catch (error) {
+        console.error(`[${extension_name}] 处理 onGenerationAfterCommands 事件时出错:`, error);
     } finally {
-        // 使用 finally 块确保 isProcessing 标志总是被重置，修复了连续处理失败的问题
         isProcessing = false;
     }
 }
@@ -248,18 +264,69 @@ jQuery(async () => {
         }
     }
 
+    // 确保新增的顶层设置有默认值
+    if (settings.minLength === undefined) {
+        settings.minLength = 500;
+    }
+
     const intervalId = setInterval(async () => {
-        if ($('#extensions_settings').length > 0) {
+        // [函数拦截] 确保 TavernHelper 可用后再执行拦截
+        if ($('#extensions_settings').length > 0 && window.TavernHelper) {
             clearInterval(intervalId);
             try {
                 loadPluginStyles();
                 await createDrawer();
+
+                // 备份原始函数
+                if (!window.original_TavernHelper_generate) {
+                    window.original_TavernHelper_generate = TavernHelper.generate;
+                }
+
+                // 创建并应用拦截器
+                TavernHelper.generate = async function(...args) {
+                    const options = args[0] || {};
+                    
+                    // 检查是否应该跳过优化：插件未启用、正在处理中、或这是一个流式请求
+                    const settings = extension_settings[extension_name] || {};
+                    if (!settings.enabled || isProcessing || options.should_stream) {
+                        return window.original_TavernHelper_generate.apply(this, args);
+                    }
+                    
+                    // 从参数中提取需要优化的用户消息
+                    const userMessage = options.injects?.[0]?.content;
+
+                    if (userMessage) {
+                        isProcessing = true;
+                        try {
+                            const finalMessage = await runOptimizationLogic(userMessage);
+                            if (finalMessage) {
+                                // 成功优化：用新内容替换旧内容
+                                options.injects[0].content = finalMessage;
+                            }
+                            // 如果优化失败 (finalMessage is null)，则不修改参数，使用原始消息继续
+                        } catch (error) {
+                            console.error(`[${extension_name}] 在拦截器中执行优化时出错:`, error);
+                        } finally {
+                            isProcessing = false;
+                        }
+                    }
+
+                    // 调用原始函数，传入可能已被修改的参数
+                    return window.original_TavernHelper_generate.apply(this, args);
+                };
+
+                // 注册传统的事件监听器，作为对主输入框操作的补充和保障
                 if (!window.qrfEventsRegistered) {
                     eventSource.on(event_types.GENERATION_AFTER_COMMANDS, onGenerationAfterCommands);
                     window.qrfEventsRegistered = true;
                 }
+
             } catch (error) {
-                console.error(`[${extension_name}] 初始化过程中发生严重错误:`, error);
+                console.error(`[${extension_name}] 初始化或函数拦截过程中发生严重错误:`, error);
+                // 如果拦截失败，尝试恢复原始函数
+                if (window.original_TavernHelper_generate) {
+                    TavernHelper.generate = window.original_TavernHelper_generate;
+                }
             }
         }
     }, 100);

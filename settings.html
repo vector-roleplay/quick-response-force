@@ -21,6 +21,11 @@
             </label>
             <small class="notes">开启后，会将角色绑定的世界书内容作为参考信息发送给API。</small>
         </div>
+        <div class="qrf_settings_block">
+            <label for="qrf_min_length">最小回复长度: <span id="qrf_min_length_value">500</span></label>
+            <input id="qrf_min_length" type="range" min="0" max="2000" step="10" value="500" />
+            <small class="notes">当AI生成的回复内容少于此值时，将自动重试最多3次。设置为0则禁用此功能。</small>
+        </div>
     </fieldset>
 
     <fieldset class="settings-group">

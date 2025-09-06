@@ -330,6 +330,9 @@ async function loadWorldbookEntries(panel) {
         }
 
         allEntries.sort((a, b) => (a.comment || '').localeCompare(b.comment || '')).forEach(entry => {
+            // [核心优化] 如果条目在SillyTavern中是关闭的，则直接跳过，不在UI中显示
+            if (!entry.enabled) return;
+
             const entryId = `qrf-entry-${entry.bookName.replace(/[^a-zA-Z0-9]/g, '-')}-${entry.uid}`;
             // 默认情况下，新加载的条目是启用的
             const isEnabled = enabledEntries[entry.bookName]?.includes(entry.uid) ?? true;
@@ -660,7 +663,6 @@ function loadSettings(panel) {
     bindSlider(panel, '#qrf_top_p', '#qrf_top_p_value');
     bindSlider(panel, '#qrf_presence_penalty', '#qrf_presence_penalty_value');
     bindSlider(panel, '#qrf_frequency_penalty', '#qrf_frequency_penalty_value');
-    bindSlider(panel, '#qrf_context_turn_count', '#qrf_context_turn_count_value');
     bindSlider(panel, '#qrf_worldbook_char_limit', '#qrf_worldbook_char_limit_value');
 
     // 加载提示词预-设

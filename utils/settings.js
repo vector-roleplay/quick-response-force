@@ -18,7 +18,7 @@ export const defaultSettings = {
         top_p: 0.95,
         presence_penalty: 1,
         frequency_penalty: 1,
-        contextTurnCount: 2,
+        contextTurnCount: 1,
         worldbookEnabled: true,
         worldbookSource: 'character', // 'character' or 'manual'
         worldbookCharLimit: 60000,

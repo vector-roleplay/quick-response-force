@@ -11,6 +11,7 @@ import { defaultSettings } from './utils/settings.js';
 
 const extension_name = 'quick-response-force';
 let isProcessing = false;
+let tempPlotToSave = null; // [架构重构] 用于在生成和消息创建之间临时存储plot
 
 /**
  * 将从 st-memory-enhancement 获取的原始表格JSON数据转换为更适合LLM读取的文本格式。
@@ -56,6 +57,57 @@ function formatTableDataForLLM(jsonData) {
     return output;
 }
 
+/**
+ * [新增] 转义正则表达式特殊字符。
+ * @param {string} string - 需要转义的字符串.
+ * @returns {string} - 转义后的字符串.
+ */
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& 表示匹配到的整个字符串
+}
+
+/**
+ * [架构重构] 从聊天记录中反向查找最新的plot。
+ * @returns {string} - 返回找到的plot文本，否则返回空字符串。
+ */
+function getPlotFromHistory() {
+    const context = getContext();
+    if (!context || !context.chat || context.chat.length === 0) {
+        return '';
+    }
+
+    // 从后往前遍历查找
+    for (let i = context.chat.length - 1; i >= 0; i--) {
+        const message = context.chat[i];
+        if (message.qrf_plot) {
+            console.log(`[${extension_name}] Found plot in message ${i}`);
+            return message.qrf_plot;
+        }
+    }
+    return '';
+}
+
+/**
+ * [架构重构] 将plot附加到最新的AI消息上。
+ */
+async function savePlotToLatestMessage() {
+    if (tempPlotToSave) {
+        const context = getContext();
+        // 在SillyTavern的事件触发时，chat数组应该已经更新
+        if (context.chat.length > 0) {
+            const lastMessage = context.chat[context.chat.length - 1];
+            // 确保是AI消息且没有被标记过，防止重复标记
+            if (lastMessage && !lastMessage.is_user && !lastMessage.qrf_plot) {
+                lastMessage.qrf_plot = tempPlotToSave;
+                console.log(`[${extension_name}] Plot data attached to the latest AI message.`);
+                // SillyTavern should handle saving automatically after generation ends.
+            }
+        }
+        // 无论成功与否，都清空临时变量，避免污染下一次生成
+        tempPlotToSave = null;
+    }
+}
+
 
 /**
  * [重构] 核心优化逻辑，可被多处调用。
@@ -84,6 +136,8 @@ async function runOptimizationLogic(userMessage) {
             settings.apiSettings.model = panel.find('#qrf_model').val();
             settings.apiSettings.tavernProfile = panel.find('#qrf_tavern_api_profile_select').val();
             settings.minLength = parseInt(panel.find('#qrf_min_length').val(), 10) || 0;
+            // [新增] 实时从UI读取上下文轮数，确保设置能立即生效
+            settings.apiSettings.contextTurnCount = parseInt(panel.find('#qrf_context_turn_count').val(), 10) || 0;
         }
 
         if (!settings.enabled || (settings.apiSettings.apiMode !== 'tavern' && !settings.apiSettings.apiUrl)) {
@@ -100,14 +154,22 @@ async function runOptimizationLogic(userMessage) {
         const contextTurnCount = apiSettings.contextTurnCount ?? 1;
         let slicedContext = [];
         if (contextTurnCount > 0) {
-            const history = context.chat.slice(-contextTurnCount);
-            slicedContext = history.map(msg => ({ role: msg.is_user ? 'user' : 'assistant', content: msg.mes }));
+            // [修复] 修正上下文逻辑，确保只包含AI的回复，且数量由`contextTurnCount`控制。
+            // 1. 从整个聊天记录中筛选出所有AI的回复。
+            const aiHistory = context.chat.filter(msg => !msg.is_user);
+            // 2. 从筛选后的历史中，截取最后N条AI的回复。
+            const slicedAiHistory = aiHistory.slice(-contextTurnCount);
+            
+            slicedContext = slicedAiHistory.map(msg => ({ role: 'assistant', content: msg.mes }));
         }
 
         let worldbookContent = '';
         if (apiSettings.worldbookEnabled) {
             worldbookContent = await getCombinedWorldbookContent(context, apiSettings);
         }
+
+        // [架构重构] 读取上一轮优化结果，用于$6占位符
+        const lastPlotContent = getPlotFromHistory();
 
         let tableDataContent = '';
         try {
@@ -128,6 +190,7 @@ async function runOptimizationLogic(userMessage) {
             'sulv3': apiSettings.rateErotic,
             'sulv4': apiSettings.rateCuckold,
             '$5': tableDataContent,
+            '$6': lastPlotContent, // [新增] 添加$6占位符及其内容
         };
 
         const processedPrompts = {
@@ -138,7 +201,8 @@ async function runOptimizationLogic(userMessage) {
 
         for (const key in replacements) {
             const value = replacements[key];
-            const regex = new RegExp(key, 'g');
+            // [修复] 使用 escapeRegExp 来安全地处理像 $ 这样的特殊字符
+            const regex = new RegExp(escapeRegExp(key), 'g');
             processedPrompts.mainPrompt = processedPrompts.mainPrompt.replace(regex, value);
             processedPrompts.systemPrompt = processedPrompts.systemPrompt.replace(regex, value);
             processedPrompts.finalSystemDirective = processedPrompts.finalSystemDirective.replace(regex, value);
@@ -169,6 +233,9 @@ async function runOptimizationLogic(userMessage) {
         }
 
         if (processedMessage) {
+            // [架构重构] 将本次优化结果暂存，等待附加到新消息上
+            tempPlotToSave = processedMessage;
+
             const finalSystemDirective = finalApiSettings.finalSystemDirective || '[SYSTEM_DIRECTIVE: You are a storyteller. The following <plot> block is your absolute script for this turn. You MUST follow the <directive> within it to generate the story.]';
             const finalMessage = `${userMessage}\n\n${finalSystemDirective}\n${processedMessage}`;
             if ($toast) toastr.clear($toast);
@@ -292,16 +359,27 @@ jQuery(async () => {
                         return window.original_TavernHelper_generate.apply(this, args);
                     }
                     
-                    // 从参数中提取需要优化的用户消息
-                    const userMessage = options.injects?.[0]?.content;
+                    // [增强] 兼容不同调用方式，同时检查 injects (来自主UI) 和 user_input (来自扩展或脚本)
+                    let userMessage = options.injects?.[0]?.content;
+                    let isFromInjects = true;
+
+                    if (!userMessage && options.user_input) {
+                        userMessage = options.user_input;
+                        isFromInjects = false;
+                    }
+
 
                     if (userMessage) {
                         isProcessing = true;
                         try {
                             const finalMessage = await runOptimizationLogic(userMessage);
                             if (finalMessage) {
-                                // 成功优化：用新内容替换旧内容
-                                options.injects[0].content = finalMessage;
+                                // 根据原始来源，将优化后的消息写回正确的位置
+                                if (isFromInjects) {
+                                    options.injects[0].content = finalMessage;
+                                } else {
+                                    options.user_input = finalMessage;
+                                }
                             }
                             // 如果优化失败 (finalMessage is null)，则不修改参数，使用原始消息继续
                         } catch (error) {
@@ -318,6 +396,8 @@ jQuery(async () => {
                 // 注册传统的事件监听器，作为对主输入框操作的补充和保障
                 if (!window.qrfEventsRegistered) {
                     eventSource.on(event_types.GENERATION_AFTER_COMMANDS, onGenerationAfterCommands);
+                    // [架构重构] 监听生成结束事件，以便将plot附加到新消息上
+                    eventSource.on(event_types.GENERATION_ENDED, savePlotToLatestMessage);
                     window.qrfEventsRegistered = true;
                 }
 

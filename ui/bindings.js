@@ -395,11 +395,11 @@ function loadPromptPresets(panel) {
 }
 
 /**
- * 保存当前三个提示词框的内容为一个新的预设。
+ * 交互式地保存一个新的或覆盖一个现有的提示词预设 (用于“另存为”功能)。
  * @param {JQuery} panel - 设置面板的jQuery对象。
  */
-function saveCurrentPromptsAsPreset(panel) {
-    const presetName = prompt("请输入预设名称：");
+function saveAsNewPreset(panel) {
+    const presetName = prompt("请输入新预设的名称：");
     if (!presetName) return;
 
     const presets = extension_settings[extensionName]?.promptPresets || [];
@@ -417,7 +417,6 @@ function saveCurrentPromptsAsPreset(panel) {
     };
 
     if (existingPresetIndex !== -1) {
-        // 如果预设已存在，请求用户确认是否覆盖
         if (confirm(`名为 "${presetName}" 的预设已存在。是否要覆盖它？`)) {
             presets[existingPresetIndex] = newPresetData;
             toastr.success(`预设 "${presetName}" 已被覆盖。`);
@@ -426,18 +425,59 @@ function saveCurrentPromptsAsPreset(panel) {
             return;
         }
     } else {
-        // 如果是新预设，则直接添加
         presets.push(newPresetData);
-        toastr.success(`预设 "${presetName}" 已保存。`);
+        toastr.success(`新预设 "${presetName}" 已保存。`);
     }
     saveSetting('promptPresets', presets);
 
-    // 刷新下拉菜单
     loadPromptPresets(panel);
-    // 自动选中刚刚保存的预设，并使用setTimeout确保刷新操作在事件流末尾执行
     setTimeout(() => {
         panel.find('#qrf_prompt_preset_select').val(presetName).trigger('change');
     }, 0);
+}
+
+
+/**
+ * 覆盖当前选中的提示词预设 (用于“保存”功能)。
+ * 如果没有预设被选中，则行为与“另存为”相同。
+ * @param {JQuery} panel - 设置面板的jQuery对象。
+ */
+function overwriteSelectedPreset(panel) {
+    const select = panel.find('#qrf_prompt_preset_select');
+    const selectedName = select.val();
+
+    if (!selectedName) {
+        // 如果没有选择预设，则“保存”应等同于“另存为”
+        saveAsNewPreset(panel);
+        return;
+    }
+
+    if (!confirm(`确定要用当前设置覆盖预设 "${selectedName}" 吗？`)) {
+        return;
+    }
+
+    const presets = extension_settings[extensionName]?.promptPresets || [];
+    const existingPresetIndex = presets.findIndex(p => p.name === selectedName);
+
+    if (existingPresetIndex === -1) {
+        toastr.error('找不到要覆盖的预设，它可能已被删除。');
+        return;
+    }
+    
+    const updatedPresetData = {
+        name: selectedName,
+        mainPrompt: panel.find('#qrf_main_prompt').val(),
+        systemPrompt: panel.find('#qrf_system_prompt').val(),
+        finalSystemDirective: panel.find('#qrf_final_system_directive').val(),
+        rateMain: parseFloat(panel.find('#qrf_rate_main').val()),
+        ratePersonal: parseFloat(panel.find('#qrf_rate_personal').val()),
+        rateErotic: parseFloat(panel.find('#qrf_rate_erotic').val()),
+        rateCuckold: parseFloat(panel.find('#qrf_rate_cuckold').val())
+    };
+
+    presets[existingPresetIndex] = updatedPresetData;
+    saveSetting('promptPresets', presets);
+    toastr.success(`预设 "${selectedName}" 已被成功覆盖。`);
 }
 
 /**
@@ -819,7 +859,8 @@ export function initializeBindings() {
 
     panel.find('#qrf_import_prompt_presets').on('click', () => panel.find('#qrf_preset_file_input').click());
     panel.find('#qrf_export_prompt_presets').on('click', () => exportPromptPresets());
-    panel.find('#qrf_save_prompt_preset').on('click', () => saveCurrentPromptsAsPreset(panel));
+    panel.find('#qrf_save_prompt_preset').on('click', () => overwriteSelectedPreset(panel));
+    panel.find('#qrf_save_as_new_prompt_preset').on('click', () => saveAsNewPreset(panel));
     panel.find('#qrf_delete_prompt_preset').on('click', () => deleteSelectedPreset(panel));
 
     panel.on('change.qrf', '#qrf_preset_file_input', function(e) {

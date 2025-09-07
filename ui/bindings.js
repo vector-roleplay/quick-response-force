@@ -334,8 +334,9 @@ async function loadWorldbookEntries(panel) {
             if (!entry.enabled) return;
 
             const entryId = `qrf-entry-${entry.bookName.replace(/[^a-zA-Z0-9]/g, '-')}-${entry.uid}`;
-            // 默认情况下，新加载的条目是启用的
-            const isEnabled = enabledEntries[entry.bookName]?.includes(entry.uid) ?? true;
+            // [修复] 优化加载逻辑：仅当一个世界书的设置完全不存在时，才默认启用其条目。
+            // 否则，严格按照已保存的设置来决定是否勾选。
+            const isEnabled = (enabledEntries[entry.bookName] === undefined) || (enabledEntries[entry.bookName]?.includes(entry.uid));
 
             const item = $(`
                 <div class="qrf_worldbook_entry_item">

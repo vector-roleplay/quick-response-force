@@ -22,8 +22,8 @@
             <small class="notes">开启后，会将角色绑定的世界书内容作为参考信息发送给API。</small>
         </div>
         <div class="qrf_settings_block">
-            <label for="qrf_min_length">最小回复长度: <span id="qrf_min_length_value">500</span></label>
-            <input id="qrf_min_length" type="range" min="0" max="2000" step="10" value="500" />
+            <label for="qrf_min_length">最小回复长度</label>
+            <input id="qrf_min_length" type="number" class="text_pole" min="0" max="2000" step="10" value="500" />
             <small class="notes">当AI生成的回复内容少于此值时，将自动重试最多3次。设置为0则禁用此功能。</small>
         </div>
         <div class="qrf_settings_block">
@@ -90,24 +90,24 @@
              <small class="notes">可手动输入模型名称，或点击下载图标从API获取列表后在右侧选择。测试连接将使用左侧输入框中的模型。</small>
         </div>
         <div class="qrf_settings_block">
-            <label for="qrf_max_tokens">最大Token数: <span id="qrf_max_tokens_value"></span></label>
-            <input id="qrf_max_tokens" type="range" min="100" max="64000" step="100" />
+            <label for="qrf_max_tokens">最大Token数</label>
+            <input id="qrf_max_tokens" type="number" class="text_pole" min="100" max="64000" step="100" />
         </div>
         <div class="qrf_settings_block">
-            <label for="qrf_temperature">温度: <span id="qrf_temperature_value"></span></label>
-            <input id="qrf_temperature" type="range" min="0" max="2" step="0.1" />
+            <label for="qrf_temperature">温度</label>
+            <input id="qrf_temperature" type="number" class="text_pole" min="0" max="2" step="0.1" />
         </div>
         <div class="qrf_settings_block">
-            <label for="qrf_top_p">Top P: <span id="qrf_top_p_value"></span></label>
-            <input id="qrf_top_p" type="range" min="0" max="1" step="0.05" />
+            <label for="qrf_top_p">Top P</label>
+            <input id="qrf_top_p" type="number" class="text_pole" min="0" max="1" step="0.05" />
         </div>
         <div class="qrf_settings_block">
-            <label for="qrf_presence_penalty">Presence Penalty: <span id="qrf_presence_penalty_value"></span></label>
-            <input id="qrf_presence_penalty" type="range" min="-2" max="2" step="0.1" />
+            <label for="qrf_presence_penalty">Presence Penalty</label>
+            <input id="qrf_presence_penalty" type="number" class="text_pole" min="-2" max="2" step="0.1" />
         </div>
         <div class="qrf_settings_block">
-            <label for="qrf_frequency_penalty">Frequency Penalty: <span id="qrf_frequency_penalty_value"></span></label>
-            <input id="qrf_frequency_penalty" type="range" min="-2" max="2" step="0.1" />
+            <label for="qrf_frequency_penalty">Frequency Penalty</label>
+            <input id="qrf_frequency_penalty" type="number" class="text_pole" min="-2" max="2" step="0.1" />
         </div>
     </div>
     </fieldset>
@@ -193,8 +193,8 @@
         </div>
 
         <div class="qrf_settings_block">
-            <label for="qrf_worldbook_char_limit">世界书最大字符数: <span id="qrf_worldbook_char_limit_value">60000</span></label>
-            <input type="range" id="qrf_worldbook_char_limit" min="1000" max="200000" step="1000" value="60000">
+            <label for="qrf_worldbook_char_limit">世界书最大字符数</label>
+            <input type="number" id="qrf_worldbook_char_limit" class="text_pole" min="1000" max="200000" step="1000" value="60000">
             <div class="qrf_settings_block_hint" style="color: var(--text_secondary); margin-top: 5px; font-size: 0.8em;">
                 从上到下对准备发送到上下文中的世界书内容进行一个按照对应字符数量的截断，防止世界书内容过多引起AI不正常回复。
             </div>

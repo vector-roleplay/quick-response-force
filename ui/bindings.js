@@ -155,11 +155,14 @@ const characterSpecificSettings = [
  * @param {*} value - 设置项的值。
  */
 async function saveSetting(key, value) {
-    const character = characters[this_chid];
-    if (!character) return; // 如果没有角色，则不保存
-
     if (characterSpecificSettings.includes(key)) {
         // --- 保存到角色卡 ---
+        const character = characters[this_chid];
+        if (!character) {
+            // 在没有角色卡的情况下，静默失败，不保存角色特定设置
+            return;
+        }
+
         if (!character.data.extensions) character.data.extensions = {};
         if (!character.data.extensions[extensionName]) character.data.extensions[extensionName] = {};
         if (!character.data.extensions[extensionName].apiSettings) character.data.extensions[extensionName].apiSettings = {};
@@ -222,24 +225,6 @@ function getMergedApiSettings() {
 }
 
 
-/**
- * 绑定滑块（range input）和其数值显示的辅助函数。
- * @param {JQuery} panel - 设置面板的jQuery对象。
- * @param {string} sliderId - 滑块的ID。
- * @param {string} displayId - 显示数值的span的ID。
- */
-function bindSlider(panel, sliderId, displayId) {
-    const slider = panel.find(sliderId);
-    const display = panel.find(displayId);
-    
-    // 初始化显示
-    display.text(slider.val());
-
-    // 监听input事件以实时更新数值显示
-    slider.on('input', function() {
-        display.text($(this).val());
-    });
-}
 
 // ---- 世界书逻辑 ----
 async function loadWorldbooks(panel) {
@@ -617,6 +602,7 @@ function loadSettings(panel) {
 
     // 加载总开关 (全局)
     panel.find('#qrf_enabled').prop('checked', globalSettings.enabled);
+    panel.find('#qrf_min_length').val(globalSettings.minLength ?? 500);
 
     // 加载API和模型设置 (大部分是全局，但世界书相关是角色卡)
     panel.find(`input[name="qrf_api_mode"][value="${apiSettings.apiMode}"]`).prop('checked', true);
@@ -637,11 +623,11 @@ function loadSettings(panel) {
         modelSelect.append(new Option('<-请先获取模型', '', true, true));
     }
 
-    panel.find('#qrf_max_tokens').val(apiSettings.max_tokens);
+    panel.find('#qrf_max_tokens').val(apiSettings.maxTokens);
     panel.find('#qrf_temperature').val(apiSettings.temperature);
-    panel.find('#qrf_top_p').val(apiSettings.top_p);
-    panel.find('#qrf_presence_penalty').val(apiSettings.presence_penalty);
-    panel.find('#qrf_frequency_penalty').val(apiSettings.frequency_penalty);
+    panel.find('#qrf_top_p').val(apiSettings.topP);
+    panel.find('#qrf_presence_penalty').val(apiSettings.presencePenalty);
+    panel.find('#qrf_frequency_penalty').val(apiSettings.frequencyPenalty);
     panel.find('#qrf_context_turn_count').val(apiSettings.contextTurnCount);
     panel.find('#qrf_worldbook_char_limit').val(apiSettings.worldbookCharLimit);
 
@@ -659,13 +645,6 @@ function loadSettings(panel) {
     updateApiUrlVisibility(panel, apiSettings.apiMode);
     updateWorldbookSourceVisibility(panel, apiSettings.worldbookSource || 'character');
     
-    bindSlider(panel, '#qrf_max_tokens', '#qrf_max_tokens_value');
-    bindSlider(panel, '#qrf_temperature', '#qrf_temperature_value');
-    bindSlider(panel, '#qrf_top_p', '#qrf_top_p_value');
-    bindSlider(panel, '#qrf_presence_penalty', '#qrf_presence_penalty_value');
-    bindSlider(panel, '#qrf_frequency_penalty', '#qrf_frequency_penalty_value');
-    bindSlider(panel, '#qrf_worldbook_char_limit', '#qrf_worldbook_char_limit_value');
-
     // 加载提示词预-设
     loadPromptPresets(panel);
 

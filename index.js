@@ -2,7 +2,7 @@
 // 由Cline移植并重构，核心功能来自Amily2号插件
 
 import { getContext, extension_settings } from '/scripts/extensions.js';
-import { characters, this_chid } from '/script.js';
+import { characters, this_chid, getRequestHeaders, saveSettings } from '/script.js';
 import { eventSource, event_types } from '/script.js';
 import { createDrawer } from './ui/drawer.js';
 import { callInterceptionApi } from './core/api.js';
@@ -67,6 +67,75 @@ function escapeRegExp(string) {
 }
 
 /**
+ * [新增] 加载上次使用的预设到全局设置，并清除当前角色卡上冲突的陈旧设置。
+ * 这是为了确保在切换角色或新开对话时，预设能够被正确应用，而不是被角色卡上的“幽灵数据”覆盖。
+ */
+async function loadPresetAndCleanCharacterData() {
+    const settings = extension_settings[extension_name];
+    if (!settings) return;
+
+    const lastUsedPresetName = settings.lastUsedPresetName;
+    const presets = settings.promptPresets || [];
+
+    if (lastUsedPresetName && presets.length > 0) {
+        const presetToLoad = presets.find(p => p.name === lastUsedPresetName);
+        if (presetToLoad) {
+            console.log(`[${extension_name}] Applying last used preset: "${lastUsedPresetName}"`);
+            
+            // 步骤1: 将预设内容加载到全局设置中
+            Object.assign(settings.apiSettings, {
+                mainPrompt: presetToLoad.mainPrompt,
+                systemPrompt: presetToLoad.systemPrompt,
+                finalSystemDirective: presetToLoad.finalSystemDirective,
+                rateMain: presetToLoad.rateMain,
+                ratePersonal: presetToLoad.ratePersonal,
+                rateErotic: presetToLoad.rateErotic,
+                rateCuckold: presetToLoad.rateCuckold
+            });
+
+            // 步骤2: 清除当前角色卡上的陈旧提示词数据
+            const character = characters[this_chid];
+            if (character?.data?.extensions?.[extension_name]?.apiSettings) {
+                const charApiSettings = character.data.extensions[extension_name].apiSettings;
+                const keysToClear = ['mainPrompt', 'systemPrompt', 'finalSystemDirective', 'rateMain', 'ratePersonal', 'rateErotic', 'rateCuckold'];
+                let settingsCleared = false;
+                keysToClear.forEach(key => {
+                    if (charApiSettings[key] !== undefined) {
+                        delete charApiSettings[key];
+                        settingsCleared = true;
+                    }
+                });
+
+                if (settingsCleared) {
+                    console.log(`[${extension_name}] Cleared stale prompt data from character card to ensure preset is applied. Saving...`);
+                    // [最终修复] 必须等待保存操作完成，以避免竞争条件
+                    try {
+                        const response = await fetch('/api/characters/merge-attributes', {
+                            method: 'POST',
+                            headers: getRequestHeaders(),
+                            body: JSON.stringify({
+                                avatar: character.avatar,
+                                data: { extensions: { [extension_name]: { apiSettings: charApiSettings } } }
+                            })
+                        });
+                        if (!response.ok) {
+                            throw new Error(`API call failed with status: ${response.status}`);
+                        }
+                        console.log(`[${extension_name}] Character card updated successfully.`);
+                    } catch (error) {
+                        console.error(`[${extension_name}] Failed to clear stale character settings on chat change:`, error);
+                    }
+                }
+            }
+        }
+    }
+    
+    // [最终修复] 立即将加载了预设的全局设置保存到磁盘，防止在程序重载时被旧的磁盘数据覆盖。
+    saveSettings();
+    console.log(`[${extension_name}] Global settings persisted to disk after applying preset.`);
+}
+
+/**
  * [架构重构] 从聊天记录中反向查找最新的plot。
  * @returns {string} - 返回找到的plot文本，否则返回空字符串。
  */
@@ -96,10 +165,10 @@ async function savePlotToLatestMessage() {
         // 在SillyTavern的事件触发时，chat数组应该已经更新
         if (context.chat.length > 0) {
             const lastMessage = context.chat[context.chat.length - 1];
-            // 确保是AI消息且没有被标记过，防止重复标记
-            if (lastMessage && !lastMessage.is_user && !lastMessage.qrf_plot) {
+            // 确保是AI消息，然后覆盖或附加plot数据
+            if (lastMessage && !lastMessage.is_user) {
                 lastMessage.qrf_plot = tempPlotToSave;
-                console.log(`[${extension_name}] Plot data attached to the latest AI message.`);
+                console.log(`[${extension_name}] Plot data attached/overwritten on the latest AI message.`);
                 // SillyTavern should handle saving automatically after generation ends.
             }
         }
@@ -137,7 +206,27 @@ async function runOptimizationLogic(userMessage) {
         const context = getContext();
         const character = characters[this_chid];
         const characterSettings = character?.data?.extensions?.[extension_name]?.apiSettings || {};
-        const apiSettings = { ...settings.apiSettings, ...characterSettings };
+        let apiSettings = { ...settings.apiSettings, ...characterSettings };
+
+        // [最终修复] 检查是否有激活的预设。如果有，则强制使用预设的提示词，覆盖任何来自角色卡的“幽灵数据”。
+        const lastUsedPresetName = settings.lastUsedPresetName;
+        const presets = settings.promptPresets || [];
+        if (lastUsedPresetName && presets.length > 0) {
+            const presetToApply = presets.find(p => p.name === lastUsedPresetName);
+            if (presetToApply) {
+                console.log(`[${extension_name}] Active preset "${lastUsedPresetName}" found. Forcing prompt override.`);
+                apiSettings = {
+                    ...apiSettings,
+                    mainPrompt: presetToApply.mainPrompt,
+                    systemPrompt: presetToApply.systemPrompt,
+                    finalSystemDirective: presetToApply.finalSystemDirective,
+                    rateMain: presetToApply.rateMain,
+                    ratePersonal: presetToApply.ratePersonal,
+                    rateErotic: presetToApply.rateErotic,
+                    rateCuckold: presetToApply.rateCuckold,
+                };
+            }
+        }
 
         const contextTurnCount = apiSettings.contextTurnCount ?? 1;
         let slicedContext = [];
@@ -324,6 +413,9 @@ jQuery(async () => {
         settings.minLength = 500;
     }
 
+    // 首次加载时，执行一次预设加载和数据清理
+    loadPresetAndCleanCharacterData();
+
     const intervalId = setInterval(async () => {
         // [函数拦截] 确保 TavernHelper 可用后再执行拦截
         if ($('#extensions_settings').length > 0 && window.TavernHelper) {
@@ -384,8 +476,11 @@ jQuery(async () => {
                 // 注册传统的事件监听器，作为对主输入框操作的补充和保障
                 if (!window.qrfEventsRegistered) {
                     eventSource.on(event_types.GENERATION_AFTER_COMMANDS, onGenerationAfterCommands);
-                    // [架构重构] 监听生成结束事件，以便将plot附加到新消息上
                     eventSource.on(event_types.GENERATION_ENDED, savePlotToLatestMessage);
+                    
+                    // [核心修复] 监听角色/聊天切换事件，以确保预设始终被正确应用
+                    eventSource.on(event_types.CHAT_CHANGED, loadPresetAndCleanCharacterData);
+
                     window.qrfEventsRegistered = true;
                 }
 

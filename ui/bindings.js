@@ -2,7 +2,7 @@
 // 由Cline参照 '优化/' 插件的健壮性实践重构
 
 import { extension_settings, getContext } from '/scripts/extensions.js';
-import { characters, this_chid, getRequestHeaders, saveSettingsDebounced } from '/script.js';
+import { characters, this_chid, getRequestHeaders, saveSettingsDebounced, saveSettings as saveSettingsImmediate } from '/script.js';
 import { eventSource, event_types } from '/script.js';
 import { extensionName, defaultSettings } from '../utils/settings.js';
 import { fetchModels, testApiConnection } from '../core/api.js';
@@ -208,25 +208,30 @@ async function saveSetting(key, value) {
         console.log(`[${extensionName}] 全局设置已更新: ${key} ->`, value);
         saveSettingsDebounced();
 
-        // [新增] 在保存全局设置时，主动清除角色卡上可能存在的同名陈旧设置
+        // [最终修复] 在保存全局设置时，主动、同步地清除角色卡上的同名陈旧设置
         const character = characters[this_chid];
         if (character?.data?.extensions?.[extensionName]?.apiSettings?.[key] !== undefined) {
             delete character.data.extensions[extensionName].apiSettings[key];
-            // 异步保存对角色卡的修改，无需等待
-            fetch('/api/characters/merge-attributes', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({
-                    avatar: character.avatar,
-                    data: { extensions: { [extensionName]: character.data.extensions[extensionName] } }
-                })
-            }).then(response => {
+            
+            // 使用 await 强制等待保存操作完成，彻底消除竞争条件
+            try {
+                const response = await fetch('/api/characters/merge-attributes', {
+                    method: 'POST',
+                    headers: getRequestHeaders(),
+                    body: JSON.stringify({
+                        avatar: character.avatar,
+                        data: { extensions: { [extensionName]: character.data.extensions[extensionName] } }
+                    })
+                });
+
                 if (response.ok) {
-                    console.log(`[${extensionName}] 已成功从角色卡中清除陈旧设置: ${key}`);
+                    console.log(`[${extensionName}] 已成功从角色卡中同步清除陈旧设置: ${key}`);
+                } else {
+                    throw new Error(`API call failed with status: ${response.status}`);
                 }
-            }).catch(error => {
-                 console.error(`[${extensionName}] 清除角色卡陈旧设置失败:`, error);
-            });
+            } catch (error) {
+                 console.error(`[${extensionName}] 同步清除角色卡陈旧设置失败:`, error);
+            }
         }
     }
 }
@@ -948,13 +953,13 @@ export function initializeBindings() {
         importPromptPresets(e.target.files[0], panel);
     });
 
-    panel.on('change.qrf', '#qrf_prompt_preset_select', function(event, data) {
+    panel.on('change.qrf', '#qrf_prompt_preset_select', async function(event, data) {
         const selectedName = $(this).val();
         const deleteBtn = panel.find('#qrf_delete_prompt_preset');
         const isAutomatic = data && data.isAutomatic; // 检查是否是自动触发
         
         // 保存当前选择
-        saveSetting('lastUsedPresetName', selectedName);
+        await saveSetting('lastUsedPresetName', selectedName);
 
         if (!selectedName) {
             deleteBtn.hide();
@@ -967,19 +972,37 @@ export function initializeBindings() {
         const selectedPreset = presets.find(p => p.name === selectedName);
 
         if (selectedPreset) {
-            // [最终修复] 加载预设时，通过触发每个元素的change事件来保存，
-            // 确保保存逻辑(包括命名转换)与用户手动修改时完全一致。
-            panel.find('#qrf_main_prompt').val(selectedPreset.mainPrompt).trigger('change');
-            panel.find('#qrf_system_prompt').val(selectedPreset.systemPrompt).trigger('change');
-            panel.find('#qrf_final_system_directive').val(selectedPreset.finalSystemDirective).trigger('change');
-            
-            panel.find('#qrf_rate_main').val(selectedPreset.rateMain ?? 1.0).trigger('change');
-            panel.find('#qrf_rate_personal').val(selectedPreset.ratePersonal ?? 1.0).trigger('change');
-            panel.find('#qrf_rate_erotic').val(selectedPreset.rateErotic ?? 1.0).trigger('change');
-            panel.find('#qrf_rate_cuckold').val(selectedPreset.rateCuckold ?? 1.0).trigger('change');
+            // [增强] 当选择预设时，直接、原子性地更新UI和设置
+            const presetData = {
+                mainPrompt: selectedPreset.mainPrompt,
+                systemPrompt: selectedPreset.systemPrompt,
+                finalSystemDirective: selectedPreset.finalSystemDirective,
+                rateMain: selectedPreset.rateMain ?? 1.0,
+                ratePersonal: selectedPreset.ratePersonal ?? 1.0,
+                rateErotic: selectedPreset.rateErotic ?? 1.0,
+                rateCuckold: selectedPreset.rateCuckold ?? 1.0
+            };
+
+            // 1. 更新UI界面
+            panel.find('#qrf_main_prompt').val(presetData.mainPrompt);
+            panel.find('#qrf_system_prompt').val(presetData.systemPrompt);
+            panel.find('#qrf_final_system_directive').val(presetData.finalSystemDirective);
+            panel.find('#qrf_rate_main').val(presetData.rateMain);
+            panel.find('#qrf_rate_personal').val(presetData.ratePersonal);
+            panel.find('#qrf_rate_erotic').val(presetData.rateErotic);
+            panel.find('#qrf_rate_cuckold').val(presetData.rateCuckold);
+
+            // 2. 直接、同步地覆盖apiSettings中的内容
+            // saveSetting现在是异步的，我们需要等待它完成
+            for (const [key, value] of Object.entries(presetData)) {
+                await saveSetting(key, value);
+            }
 
             // [核心修复] 清除角色卡上可能存在的、会覆盖全局预设的陈旧设置
-            clearCharacterStaleSettings('prompts');
+            await clearCharacterStaleSettings('prompts');
+            
+            // [最终修复] 强制立即将更新后的全局设置写入磁盘，彻底消除异步竞争条件
+            saveSettingsImmediate();
 
             // 只有在非自动触发时才显示通知
             if (!isAutomatic) {

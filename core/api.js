@@ -174,11 +174,20 @@ export async function callInterceptionApi(userMessage, contextMessages, apiSetti
             }
 
             console.log(`[${extensionName}] 通过酒馆连接预设 "${targetProfile.name || targetProfile.id}" 发送请求...`);
+            // [核心增强] 构造一个包含UI参数的选项对象，以覆盖酒馆预设
+            const overrideOptions = {
+                max_tokens: apiSettings.max_tokens,
+                temperature: apiSettings.temperature,
+                top_p: apiSettings.top_p,
+                presence_penalty: apiSettings.presence_penalty,
+                frequency_penalty: apiSettings.frequency_penalty,
+            };
+
             // [关键修改] 发起请求但不等待其完成
+            // [重构] 不再传递覆盖参数，以完全使用酒馆预设中的设置
             responsePromise = context.ConnectionManagerRequestService.sendRequest(
                 targetProfile.id,
-                messages,
-                apiSettings.max_tokens,
+                messages
             );
 
         } catch (error) {
@@ -197,6 +206,20 @@ export async function callInterceptionApi(userMessage, contextMessages, apiSetti
         
         // [关键修改] 在恢复预设之后，再等待API响应
         result = await responsePromise;
+    }
+    else if (apiSettings.apiMode === 'perfect') {
+        const profileId = apiSettings.tavernProfile;
+        if (!profileId) {
+            toastr.error('未选择酒馆连接预设。', '配置错误');
+            return null;
+        }
+        const context = getContext();
+        console.log(`[${extensionName}] 通过完美模式发送请求...`);
+        result = await context.ConnectionManagerRequestService.sendRequest(
+            profileId,
+            messages,
+            apiSettings.max_tokens,
+        );
     }
     else if (apiSettings.apiMode === 'backend') {
         result = await callApiViaBackend(apiSettings, messages);
@@ -393,10 +416,18 @@ export async function testApiConnection(apiSettings) {
                 if (!profile.preset) throw new Error(`预设 "${profile.name || profile.id}" 没有选择预设。`);
 
                 console.log(`[${extensionName}] 通过酒馆连接预设 "${profile.name || profile.id}" 测试`);
+                // [核心增强] 在测试时也注入UI参数
+                const testOverrideOptions = {
+                    max_tokens: 10,
+                    temperature: apiSettings.temperature,
+                    top_p: apiSettings.top_p,
+                    presence_penalty: apiSettings.presence_penalty,
+                    frequency_penalty: apiSettings.frequency_penalty,
+                };
+                // [重构] 不再传递覆盖参数，以完全使用酒馆预设中的设置进行测试
                 responsePromise = context.ConnectionManagerRequestService.sendRequest(
                     profile.id,
-                    testMessages,
-                    10,
+                    testMessages
                 );
             } finally {
                 const currentProfileAfterCall = await window.TavernHelper.triggerSlash('/profile');

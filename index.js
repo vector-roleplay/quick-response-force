@@ -128,18 +128,6 @@ async function runOptimizationLogic(userMessage) {
             },
         };
 
-        const panel = $('#qrf_settings_panel');
-        if (panel.length > 0) {
-            settings.apiSettings.apiMode = panel.find('input[name="qrf_api_mode"]:checked').val();
-            settings.apiSettings.apiUrl = panel.find('#qrf_api_url').val();
-            settings.apiSettings.apiKey = panel.find('#qrf_api_key').val();
-            settings.apiSettings.model = panel.find('#qrf_model').val();
-            settings.apiSettings.tavernProfile = panel.find('#qrf_tavern_api_profile_select').val();
-            settings.minLength = parseInt(panel.find('#qrf_min_length').val(), 10) || 0;
-            // [新增] 实时从UI读取上下文轮数，确保设置能立即生效
-            settings.apiSettings.contextTurnCount = parseInt(panel.find('#qrf_context_turn_count').val(), 10) || 0;
-        }
-
         if (!settings.enabled || (settings.apiSettings.apiMode !== 'tavern' && !settings.apiSettings.apiUrl)) {
             return null; // 插件未启用，直接返回
         }

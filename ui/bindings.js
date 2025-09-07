@@ -207,6 +207,27 @@ async function saveSetting(key, value) {
 
         console.log(`[${extensionName}] 全局设置已更新: ${key} ->`, value);
         saveSettingsDebounced();
+
+        // [新增] 在保存全局设置时，主动清除角色卡上可能存在的同名陈旧设置
+        const character = characters[this_chid];
+        if (character?.data?.extensions?.[extensionName]?.apiSettings?.[key] !== undefined) {
+            delete character.data.extensions[extensionName].apiSettings[key];
+            // 异步保存对角色卡的修改，无需等待
+            fetch('/api/characters/merge-attributes', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({
+                    avatar: character.avatar,
+                    data: { extensions: { [extensionName]: character.data.extensions[extensionName] } }
+                })
+            }).then(response => {
+                if (response.ok) {
+                    console.log(`[${extensionName}] 已成功从角色卡中清除陈旧设置: ${key}`);
+                }
+            }).catch(error => {
+                 console.error(`[${extensionName}] 清除角色卡陈旧设置失败:`, error);
+            });
+        }
     }
 }
 
@@ -222,6 +243,64 @@ function getMergedApiSettings() {
     const characterSettings = character?.data?.extensions?.[extensionName]?.apiSettings || {};
     
     return { ...globalSettings, ...characterSettings };
+}
+
+/**
+ * [新增] 清除当前角色卡上所有陈旧的、与提示词相关的设置。
+ * 这是为了防止旧的角色卡数据覆盖新加载的全局预设。
+ */
+/**
+ * [新增] 清除当前角色卡上所有陈旧的、本应是全局的设置。
+ * 这是为了防止旧的角色卡数据覆盖新的全局设置。
+ * @param {'prompts' | 'api'} type - 要清除的设置类型。
+ */
+async function clearCharacterStaleSettings(type) {
+    const character = characters[this_chid];
+    if (!character?.data?.extensions?.[extensionName]?.apiSettings) {
+        return; // 没有角色或没有设置可清除。
+    }
+
+    const charApiSettings = character.data.extensions[extensionName].apiSettings;
+    let keysToClear = [];
+    let message = '';
+
+    if (type === 'prompts') {
+        keysToClear = ['mainPrompt', 'systemPrompt', 'finalSystemDirective', 'rateMain', 'ratePersonal', 'rateErotic', 'rateCuckold'];
+        message = '陈旧提示词设置';
+    } else if (type === 'api') {
+        // 清除所有非角色特定的API设置
+        const allApiKeys = Object.keys(defaultSettings.apiSettings);
+        keysToClear = allApiKeys.filter(key => !characterSpecificSettings.includes(key));
+        message = '陈旧API连接设置';
+    }
+
+    if (keysToClear.length === 0) return;
+
+    let settingsCleared = false;
+    keysToClear.forEach(key => {
+        if (charApiSettings[key] !== undefined) {
+            delete charApiSettings[key];
+            settingsCleared = true;
+        }
+    });
+
+    if (settingsCleared) {
+        try {
+            const response = await fetch('/api/characters/merge-attributes', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({
+                    avatar: character.avatar,
+                    data: { extensions: { [extensionName]: { apiSettings: charApiSettings } } }
+                })
+            });
+            if (!response.ok) throw new Error(`API call failed with status: ${response.status}`);
+            console.log(`[${extensionName}] 已成功清除当前角色卡的${message}。`);
+        } catch (error) {
+            console.error(`[${extensionName}] 清除角色${message}失败:`, error);
+            toastr.error(`无法清除角色卡上的${message}。`);
+        }
+    }
 }
 
 
@@ -756,6 +835,8 @@ export function initializeBindings() {
 
         if (element.name === 'qrf_api_mode') {
             updateApiUrlVisibility(panel, value);
+            // [核心修复] 切换API模式时，清除所有旧的、非角色特定的API设置
+            clearCharacterStaleSettings('api');
         }
         if (element.name === 'qrf_worldbook_source') {
             updateWorldbookSourceVisibility(panel, value);
@@ -886,15 +967,19 @@ export function initializeBindings() {
         const selectedPreset = presets.find(p => p.name === selectedName);
 
         if (selectedPreset) {
+            // [最终修复] 加载预设时，通过触发每个元素的change事件来保存，
+            // 确保保存逻辑(包括命名转换)与用户手动修改时完全一致。
             panel.find('#qrf_main_prompt').val(selectedPreset.mainPrompt).trigger('change');
             panel.find('#qrf_system_prompt').val(selectedPreset.systemPrompt).trigger('change');
             panel.find('#qrf_final_system_directive').val(selectedPreset.finalSystemDirective).trigger('change');
             
-            // 加载速率设置，并为旧预设提供默认值
             panel.find('#qrf_rate_main').val(selectedPreset.rateMain ?? 1.0).trigger('change');
             panel.find('#qrf_rate_personal').val(selectedPreset.ratePersonal ?? 1.0).trigger('change');
             panel.find('#qrf_rate_erotic').val(selectedPreset.rateErotic ?? 1.0).trigger('change');
             panel.find('#qrf_rate_cuckold').val(selectedPreset.rateCuckold ?? 1.0).trigger('change');
+
+            // [核心修复] 清除角色卡上可能存在的、会覆盖全局预设的陈旧设置
+            clearCharacterStaleSettings('prompts');
 
             // 只有在非自动触发时才显示通知
             if (!isAutomatic) {

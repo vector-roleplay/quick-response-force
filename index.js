@@ -338,32 +338,71 @@ async function runOptimizationLogic(userMessage) {
 
 
 async function onGenerationAfterCommands(type, params, dryRun) {
-    if (type === 'regenerate' || isProcessing || dryRun) {
+    // 如果消息已被TavernHelper钩子处理，则跳过
+    if (params?._qrf_processed_by_hook) {
         return;
     }
 
-    // 仅处理来自主输入框的指令，脚本指令将由函数拦截器处理
-    const textInBox = $('#send_textarea').val();
-    if (!textInBox || textInBox.trim().length === 0) {
+    const settings = extension_settings[extension_name] || {};
+    if (type === 'regenerate' || isProcessing || dryRun || !settings.enabled) {
         return;
     }
-    
-    isProcessing = true;
-    try {
-        const finalMessage = await runOptimizationLogic(textInBox);
 
-        if (finalMessage) {
-            $('#send_textarea').val(finalMessage);
-            $('#send_textarea').trigger('input');
-        } else {
-            // 失败时恢复原始输入
-            $('#send_textarea').val(textInBox);
-            $('#send_textarea').trigger('input');
+    const context = getContext();
+
+    // [策略1] 检查最新的聊天消息 (主要用于 /send 等命令，这些命令会先创建消息再触发生成)
+    if (context && context.chat && context.chat.length > 0) {
+        const lastMessageIndex = context.chat.length - 1;
+        const lastMessage = context.chat[lastMessageIndex];
+
+        // If the last message is a new user message, process it.
+        if (lastMessage && lastMessage.is_user && !lastMessage._qrf_processed) {
+            lastMessage._qrf_processed = true; // Prevent reprocessing
+
+            const messageToProcess = lastMessage.mes;
+            if (messageToProcess && messageToProcess.trim().length > 0) {
+                isProcessing = true;
+                try {
+                    const finalMessage = await runOptimizationLogic(messageToProcess);
+                    if (finalMessage) {
+                        params.prompt = finalMessage; // Inject into generation
+                        lastMessage.mes = finalMessage; // Update chat history
+                        
+                        // [UI修复] 发送消息更新事件以刷新UI
+                        eventSource.emit(event_types.MESSAGE_UPDATED, lastMessageIndex);
+                        
+                        // Clean the textarea if it contains the original text
+                        if ($('#send_textarea').val() === messageToProcess) {
+                            $('#send_textarea').val('');
+                            $('#send_textarea').trigger('input');
+                        }
+                    }
+                } catch (error) {
+                    console.error(`[${extension_name}] Error processing last chat message:`, error);
+                    delete lastMessage._qrf_processed; // Allow retry on error
+                } finally {
+                    isProcessing = false;
+                }
+                return; // Strategy 1 was successful, so we stop here.
+            }
         }
-    } catch (error) {
-        console.error(`[${extension_name}] 处理 onGenerationAfterCommands 事件时出错:`, error);
-    } finally {
-        isProcessing = false;
+    }
+
+    // [策略2] 检查主输入框 (用于用户在UI中直接输入并点击发送)
+    const textInBox = $('#send_textarea').val();
+    if (textInBox && textInBox.trim().length > 0) {
+        isProcessing = true;
+        try {
+            const finalMessage = await runOptimizationLogic(textInBox);
+            if (finalMessage) {
+                $('#send_textarea').val(finalMessage);
+                $('#send_textarea').trigger('input');
+            }
+        } catch (error) {
+            console.error(`[${extension_name}] Error processing textarea input:`, error);
+        } finally {
+            isProcessing = false;
+        }
     }
 }
 
@@ -417,76 +456,71 @@ jQuery(async () => {
     loadPresetAndCleanCharacterData();
 
     const intervalId = setInterval(async () => {
-        // [函数拦截] 确保 TavernHelper 可用后再执行拦截
+        // 确保UI和TavernHelper都已加载
         if ($('#extensions_settings').length > 0 && window.TavernHelper) {
             clearInterval(intervalId);
             try {
                 loadPluginStyles();
                 await createDrawer();
 
-                // 备份原始函数
+                // [并行方案1] 恢复猴子补丁以拦截直接的JS调用
                 if (!window.original_TavernHelper_generate) {
                     window.original_TavernHelper_generate = TavernHelper.generate;
                 }
-
-                // 创建并应用拦截器
                 TavernHelper.generate = async function(...args) {
                     const options = args[0] || {};
-                    
-                    // 检查是否应该跳过优化：插件未启用、正在处理中、或这是一个流式请求
                     const settings = extension_settings[extension_name] || {};
+                    
                     if (!settings.enabled || isProcessing || options.should_stream) {
                         return window.original_TavernHelper_generate.apply(this, args);
                     }
                     
-                    // [增强] 兼容不同调用方式，同时检查 injects (来自主UI) 和 user_input (来自扩展或脚本)
-                    let userMessage = options.injects?.[0]?.content;
-                    let isFromInjects = true;
-
-                    if (!userMessage && options.user_input) {
-                        userMessage = options.user_input;
-                        isFromInjects = false;
+                    let userMessage = options.user_input || options.prompt;
+                    if (options.injects?.[0]?.content) {
+                        userMessage = options.injects[0].content;
                     }
-
 
                     if (userMessage) {
                         isProcessing = true;
                         try {
                             const finalMessage = await runOptimizationLogic(userMessage);
                             if (finalMessage) {
-                                // 根据原始来源，将优化后的消息写回正确的位置
-                                if (isFromInjects) {
+                                // 根据来源写回
+                                if (options.injects?.[0]?.content) {
                                     options.injects[0].content = finalMessage;
+                                } else if (options.prompt) {
+                                    options.prompt = finalMessage;
                                 } else {
                                     options.user_input = finalMessage;
                                 }
+                                // 添加标志，防止 GENERATION_AFTER_COMMANDS 重复处理
+                                options._qrf_processed_by_hook = true;
                             }
-                            // 如果优化失败 (finalMessage is null)，则不修改参数，使用原始消息继续
                         } catch (error) {
-                            console.error(`[${extension_name}] 在拦截器中执行优化时出错:`, error);
+                            console.error(`[${extension_name}] Error in TavernHelper.generate hook:`, error);
                         } finally {
                             isProcessing = false;
                         }
                     }
 
-                    // 调用原始函数，传入可能已被修改的参数
                     return window.original_TavernHelper_generate.apply(this, args);
                 };
 
-                // 注册传统的事件监听器，作为对主输入框操作的补充和保障
+
+                // [并行方案2] 注册事件监听器
                 if (!window.qrfEventsRegistered) {
+                    // 核心拦截点：处理主输入框和 /send 命令
                     eventSource.on(event_types.GENERATION_AFTER_COMMANDS, onGenerationAfterCommands);
-                    eventSource.on(event_types.GENERATION_ENDED, savePlotToLatestMessage);
                     
-                    // [核心修复] 监听角色/聊天切换事件，以确保预设始终被正确应用
+                    // 辅助功能
+                    eventSource.on(event_types.GENERATION_ENDED, savePlotToLatestMessage);
                     eventSource.on(event_types.CHAT_CHANGED, loadPresetAndCleanCharacterData);
 
                     window.qrfEventsRegistered = true;
+                    console.log(`[${extension_name}] Parallel event listeners registered.`);
                 }
-
             } catch (error) {
-                console.error(`[${extension_name}] 初始化或函数拦截过程中发生严重错误:`, error);
-                // 如果拦截失败，尝试恢复原始函数
+                console.error(`[${extension_name}] Initialization failed:`, error);
                 if (window.original_TavernHelper_generate) {
                     TavernHelper.generate = window.original_TavernHelper_generate;
                 }

@@ -37,26 +37,8 @@ export async function createDrawer() {
 
         // 初始化UI数据绑定和事件
         initializeBindings();
-
-        // [功能更新] 为抽屉的展开/折叠按钮添加事件监听器
-        $('#qrf_extension_frame .inline-drawer-toggle').on('click', function() {
-            const content = $(this).next('.inline-drawer-content');
-            // 只有在展开抽屉时才触发刷新
-            if (!content.is(':visible')) {
-                // 动态导入并调用刷新函数
-                import('./bindings.js').then(module => {
-                    if (module.loadWorldbookEntries) {
-                        console.log(`[${extensionName}] 抽屉已展开，正在刷新世界书条目...`);
-                        const panel = $('#qrf_settings_panel');
-                        if (panel.length > 0) {
-                            module.loadWorldbookEntries(panel);
-                        }
-                    }
-                }).catch(err => console.error(`[${extensionName}] 动态导入bindings.js失败:`, err));
-            }
-        });
         
-        console.log(`[${extensionName}] 设置面板已成功创建，并已添加自动刷新功能。`);
+        console.log(`[${extensionName}] 设置面板已成功创建。`);
 
     } catch (error) {
         console.error(`[${extensionName}] 加载设置面板HTML时发生错误:`, error);

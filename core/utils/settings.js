@@ -27,7 +27,7 @@ export const defaultSettings = {
         rateErotic: 0.2,
         rateCuckold: 0.2,
         selectedWorldbooks: [], // 新增：存储选中的世界书
-        disabledWorldbookEntries: {}, // [功能更新] 只记录用户取消勾选的条目 { worldbookName: [uid1, uid2] }
+        enabledWorldbookEntries: {}, // 新增：存储启用的世界书条目 { worldbookName: [uid1, uid2] }
 mainPrompt: `// 0.  **[最高行为准则] 角色、输入与输出限定 (Role, Input & Output Limitation)**: 这是你的身份和使命，其优先级高于一切。
 //     *   **你的角色**: 你是一个“剧情分析与规划引擎”。
 //     *   **你的输入**: 你的思考**必须**基于**三个核心信息**：

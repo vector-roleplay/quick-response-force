@@ -9,10 +9,42 @@
  * @returns {Promise<string>} - 返回一个包含所有最终触发的世界书条目内容的字符串。
  */
 export async function getCombinedWorldbookContent(context, apiSettings) {
-    // [架构重构 & 功能更新] 始终使用传入的、已经合并好的apiSettings作为唯一数据源，不再从UI面板读取。
-    // 这确保了无论UI是否打开，核心逻辑都使用一致且正确的设置。
+    // [核心修复] 运行时直接从UI读取所有世界书相关设置，确保数据源绝对一致。
+    const panel = $('#qrf_settings_panel');
+    let liveSettings = {};
 
-    if (!apiSettings.worldbookEnabled) {
+    if (panel.length > 0) {
+        liveSettings.worldbookEnabled = panel.find('#qrf_worldbook_enabled').is(':checked');
+        liveSettings.worldbookSource = panel.find('input[name="qrf_worldbook_source"]:checked').val() || 'character';
+        liveSettings.selectedWorldbooks = panel.find('#qrf_selected_worldbooks').val() || [];
+        liveSettings.worldbookCharLimit = parseInt(panel.find('#qrf_worldbook_char_limit').val(), 10) || 60000;
+
+        // 实时构建启用的条目列表，这部分逻辑模仿自 bindings.js 中的 saveEnabledEntries
+        let enabledEntries = {};
+        panel.find('#qrf_worldbook_entry_list_container input[type="checkbox"]').each(function() {
+            if ($(this).is(':checked')) {
+                const bookName = $(this).data('book');
+                const uid = parseInt($(this).data('uid'));
+                if (!enabledEntries[bookName]) {
+                    enabledEntries[bookName] = [];
+                }
+                enabledEntries[bookName].push(uid);
+            }
+        });
+        liveSettings.enabledWorldbookEntries = enabledEntries;
+    } else {
+        // 如果UI面板不存在，则回退到传入的设置，以保证在无UI环境下的兼容性
+        console.warn('[剧情优化大师] 未找到设置面板，世界书功能将回退到使用已保存的设置。');
+        liveSettings = {
+            worldbookEnabled: apiSettings.worldbookEnabled,
+            worldbookSource: apiSettings.worldbookSource,
+            selectedWorldbooks: apiSettings.selectedWorldbooks,
+            worldbookCharLimit: apiSettings.worldbookCharLimit,
+            enabledWorldbookEntries: apiSettings.enabledWorldbookEntries,
+        };
+    }
+
+    if (!liveSettings.worldbookEnabled) {
         return '';
     }
 
@@ -24,8 +56,8 @@ export async function getCombinedWorldbookContent(context, apiSettings) {
     try {
         let bookNames = [];
         
-        if (apiSettings.worldbookSource === 'manual') {
-            bookNames = apiSettings.selectedWorldbooks || [];
+        if (liveSettings.worldbookSource === 'manual') {
+            bookNames = liveSettings.selectedWorldbooks;
             if (bookNames.length === 0) return '';
         } else {
             const charLorebooks = await window.TavernHelper.getCharLorebooks({ type: 'all' });
@@ -45,16 +77,12 @@ export async function getCombinedWorldbookContent(context, apiSettings) {
         }
 
         if (allEntries.length === 0) return '';
-
-        // [功能更新] 应用反向选择逻辑：过滤掉那些在disabledWorldbookEntries中被记录的条目。
-        const disabledEntriesMap = apiSettings.disabledWorldbookEntries || {};
+        
+        const enabledEntriesMap = liveSettings.enabledWorldbookEntries || {};
         const userEnabledEntries = allEntries.filter(entry => {
-            // 首先，条目本身必须在SillyTavern中是启用的
             if (!entry.enabled) return false;
-            
-            // 其次，它不能出现在我们的禁用列表中
-            const isDisabled = disabledEntriesMap[entry.bookName]?.includes(entry.uid);
-            return !isDisabled;
+            const bookConfig = enabledEntriesMap[entry.bookName];
+            return bookConfig ? bookConfig.includes(entry.uid) : false;
         });
 
         if (userEnabledEntries.length === 0) return '';
@@ -103,7 +131,7 @@ export async function getCombinedWorldbookContent(context, apiSettings) {
 
         const combinedContent = finalContent.join('\n\n---\n\n');
         
-        const limit = apiSettings.worldbookCharLimit || 60000;
+        const limit = liveSettings.worldbookCharLimit;
         if (combinedContent.length > limit) {
             console.log(`[剧情优化大师] 世界书内容 (${combinedContent.length} chars) 超出限制 (${limit} chars)，将被截断。`);
             return combinedContent.substring(0, limit);

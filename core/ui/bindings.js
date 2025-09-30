@@ -2,7 +2,7 @@
 // 由Cline参照 '优化/' 插件的健壮性实践重构
 
 import { extension_settings, getContext } from '/scripts/extensions.js';
-import { characters, this_chid, getRequestHeaders, saveSettingsDebounced, saveSettings as saveSettingsImmediate } from '/script.js';
+import { characters, this_chid, getRequestHeaders, saveSettingsDebounced } from '/script.js';
 import { eventSource, event_types } from '/script.js';
 import { extensionName, defaultSettings } from '../utils/settings.js';
 import { fetchModels, testApiConnection } from '../core/api.js';
@@ -24,7 +24,7 @@ export function saveAllSettings() {
     panel.find('input[type="range"]').trigger('change.qrf');
     
     // 确保世界书条目也被保存
-    saveDisabledEntries();
+    saveEnabledEntries();
     
     toastr.info('设置已自动保存。');
 }
@@ -145,7 +145,7 @@ async function loadTavernApiProfiles(panel) {
 const characterSpecificSettings = [
     'worldbookSource',
     'selectedWorldbooks',
-    'disabledWorldbookEntries'
+    'enabledWorldbookEntries'
 ];
 
 /**
@@ -207,32 +207,6 @@ async function saveSetting(key, value) {
 
         console.log(`[${extensionName}] 全局设置已更新: ${key} ->`, value);
         saveSettingsDebounced();
-
-        // [最终修复] 在保存全局设置时，主动、同步地清除角色卡上的同名陈旧设置
-        const character = characters[this_chid];
-        if (character?.data?.extensions?.[extensionName]?.apiSettings?.[key] !== undefined) {
-            delete character.data.extensions[extensionName].apiSettings[key];
-            
-            // 使用 await 强制等待保存操作完成，彻底消除竞争条件
-            try {
-                const response = await fetch('/api/characters/merge-attributes', {
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                    body: JSON.stringify({
-                        avatar: character.avatar,
-                        data: { extensions: { [extensionName]: character.data.extensions[extensionName] } }
-                    })
-                });
-
-                if (response.ok) {
-                    console.log(`[${extensionName}] 已成功从角色卡中同步清除陈旧设置: ${key}`);
-                } else {
-                    throw new Error(`API call failed with status: ${response.status}`);
-                }
-            } catch (error) {
-                 console.error(`[${extensionName}] 同步清除角色卡陈旧设置失败:`, error);
-            }
-        }
     }
 }
 
@@ -301,6 +275,7 @@ async function clearCharacterStaleSettings(type) {
             });
             if (!response.ok) throw new Error(`API call failed with status: ${response.status}`);
             console.log(`[${extensionName}] 已成功清除当前角色卡的${message}。`);
+            toastr.info(`已清除角色卡上的${message}。`);
         } catch (error) {
             console.error(`[${extensionName}] 清除角色${message}失败:`, error);
             toastr.error(`无法清除角色卡上的${message}。`);
@@ -371,7 +346,7 @@ async function loadWorldbookEntries(panel) {
     }
 
     const selectedBooks = bookNames;
-    let disabledEntries = apiSettings.disabledWorldbookEntries || {};
+    let enabledEntries = apiSettings.enabledWorldbookEntries || {};
     let totalEntries = 0;
     let visibleEntries = 0;
 
@@ -403,12 +378,13 @@ async function loadWorldbookEntries(panel) {
             if (!entry.enabled) return;
 
             const entryId = `qrf-entry-${entry.bookName.replace(/[^a-zA-Z0-9]/g, '-')}-${entry.uid}`;
-            // [功能更新] 反向选择逻辑：默认全部勾选，只取消勾选那些被记录为“禁用”的条目。
-            const isDisabled = disabledEntries[entry.bookName]?.includes(entry.uid);
+            // [修复] 优化加载逻辑：仅当一个世界书的设置完全不存在时，才默认启用其条目。
+            // 否则，严格按照已保存的设置来决定是否勾选。
+            const isEnabled = (enabledEntries[entry.bookName] === undefined) || (enabledEntries[entry.bookName]?.includes(entry.uid));
 
             const item = $(`
                 <div class="qrf_worldbook_entry_item">
-                    <input type="checkbox" id="${entryId}" data-book="${entry.bookName}" data-uid="${entry.uid}" ${!isDisabled ? 'checked' : ''}>
+                    <input type="checkbox" id="${entryId}" data-book="${entry.bookName}" data-uid="${entry.uid}" ${isEnabled ? 'checked' : ''}>
                     <label for="${entryId}" title="世界书: ${entry.bookName}\nUID: ${entry.uid}">${entry.comment || '无标题条目'}</label>
                 </div>
             `);
@@ -425,31 +401,35 @@ async function loadWorldbookEntries(panel) {
 }
 
 
-function saveDisabledEntries() {
+function saveEnabledEntries() {
     const panel = $('#qrf_settings_panel');
-    let disabledEntries = {};
+    let enabledEntries = {};
 
     panel.find('#qrf_worldbook_entry_list_container input[type="checkbox"]').each(function() {
         const bookName = $(this).data('book');
         const uid = parseInt($(this).data('uid'));
 
-        // [功能更新] 只记录未勾选的条目
-        if (!$(this).is(':checked')) {
-            if (!disabledEntries[bookName]) {
-                disabledEntries[bookName] = [];
+        if (!enabledEntries[bookName]) {
+            enabledEntries[bookName] = [];
+        }
+
+        if ($(this).is(':checked')) {
+            enabledEntries[bookName].push(uid);
+        }
+    });
+    
+    const apiSettings = getMergedApiSettings();
+    
+    if (apiSettings.worldbookSource === 'manual') {
+        const selectedBooks = apiSettings.selectedWorldbooks || [];
+        Object.keys(enabledEntries).forEach(bookName => {
+            if (!selectedBooks.includes(bookName)) {
+                delete enabledEntries[bookName];
             }
-            disabledEntries[bookName].push(uid);
-        }
-    });
+        });
+    }
 
-    // 清理空数组，保持数据整洁
-    Object.keys(disabledEntries).forEach(bookName => {
-        if (disabledEntries[bookName].length === 0) {
-            delete disabledEntries[bookName];
-        }
-    });
-
-    saveSetting('disabledWorldbookEntries', disabledEntries);
+    saveSetting('enabledWorldbookEntries', enabledEntries);
 }
 
 /**
@@ -803,18 +783,6 @@ export function initializeBindings() {
         loadSettings(panel);
     });
 
-    // [功能更新 & 修复] 监听插件核心功能触发事件，刷新世界书
-    eventSource.on('qrf-plugin-triggered', () => {
-        // 重新获取panel引用以确保稳健性
-        const currentPanel = $('#qrf_settings_panel');
-        // 只要面板存在于DOM中就刷新，不再检查可见性，确保数据在需要时总是最新的。
-        if (currentPanel.length > 0) {
-            console.log(`[${extensionName}] 插件核心功能已触发，正在刷新世界书条目...`);
-            // 直接调用 loadWorldbookEntries，它会处理所有加载逻辑
-            loadWorldbookEntries(currentPanel);
-        }
-    });
-
     // --- 事件绑定区域 (智能保存) ---
 
     // 优化1: 创建一个统一的保存处理器，以避免代码重复
@@ -960,13 +928,13 @@ export function initializeBindings() {
         importPromptPresets(e.target.files[0], panel);
     });
 
-    panel.on('change.qrf', '#qrf_prompt_preset_select', async function(event, data) {
+    panel.on('change.qrf', '#qrf_prompt_preset_select', function(event, data) {
         const selectedName = $(this).val();
         const deleteBtn = panel.find('#qrf_delete_prompt_preset');
         const isAutomatic = data && data.isAutomatic; // 检查是否是自动触发
         
         // 保存当前选择
-        await saveSetting('lastUsedPresetName', selectedName);
+        saveSetting('lastUsedPresetName', selectedName);
 
         if (!selectedName) {
             deleteBtn.hide();
@@ -979,37 +947,19 @@ export function initializeBindings() {
         const selectedPreset = presets.find(p => p.name === selectedName);
 
         if (selectedPreset) {
-            // [增强] 当选择预设时，直接、原子性地更新UI和设置
-            const presetData = {
-                mainPrompt: selectedPreset.mainPrompt,
-                systemPrompt: selectedPreset.systemPrompt,
-                finalSystemDirective: selectedPreset.finalSystemDirective,
-                rateMain: selectedPreset.rateMain ?? 1.0,
-                ratePersonal: selectedPreset.ratePersonal ?? 1.0,
-                rateErotic: selectedPreset.rateErotic ?? 1.0,
-                rateCuckold: selectedPreset.rateCuckold ?? 1.0
-            };
-
-            // 1. 更新UI界面
-            panel.find('#qrf_main_prompt').val(presetData.mainPrompt);
-            panel.find('#qrf_system_prompt').val(presetData.systemPrompt);
-            panel.find('#qrf_final_system_directive').val(presetData.finalSystemDirective);
-            panel.find('#qrf_rate_main').val(presetData.rateMain);
-            panel.find('#qrf_rate_personal').val(presetData.ratePersonal);
-            panel.find('#qrf_rate_erotic').val(presetData.rateErotic);
-            panel.find('#qrf_rate_cuckold').val(presetData.rateCuckold);
-
-            // 2. 直接、同步地覆盖apiSettings中的内容
-            // saveSetting现在是异步的，我们需要等待它完成
-            for (const [key, value] of Object.entries(presetData)) {
-                await saveSetting(key, value);
-            }
+            // [最终修复] 加载预设时，通过触发每个元素的change事件来保存，
+            // 确保保存逻辑(包括命名转换)与用户手动修改时完全一致。
+            panel.find('#qrf_main_prompt').val(selectedPreset.mainPrompt).trigger('change');
+            panel.find('#qrf_system_prompt').val(selectedPreset.systemPrompt).trigger('change');
+            panel.find('#qrf_final_system_directive').val(selectedPreset.finalSystemDirective).trigger('change');
+            
+            panel.find('#qrf_rate_main').val(selectedPreset.rateMain ?? 1.0).trigger('change');
+            panel.find('#qrf_rate_personal').val(selectedPreset.ratePersonal ?? 1.0).trigger('change');
+            panel.find('#qrf_rate_erotic').val(selectedPreset.rateErotic ?? 1.0).trigger('change');
+            panel.find('#qrf_rate_cuckold').val(selectedPreset.rateCuckold ?? 1.0).trigger('change');
 
             // [核心修复] 清除角色卡上可能存在的、会覆盖全局预设的陈旧设置
-            await clearCharacterStaleSettings('prompts');
-            
-            // [最终修复] 强制立即将更新后的全局设置写入磁盘，彻底消除异步竞争条件
-            saveSettingsImmediate();
+            clearCharacterStaleSettings('prompts');
 
             // 只有在非自动触发时才显示通知
             if (!isAutomatic) {
@@ -1056,16 +1006,16 @@ export function initializeBindings() {
     });
 
     panel.on('change.qrf', '#qrf_worldbook_entry_list_container input[type="checkbox"]', () => {
-        saveDisabledEntries();
+        saveEnabledEntries();
     });
 
     panel.on('click.qrf', '#qrf_worldbook_entry_select_all', () => {
         panel.find('#qrf_worldbook_entry_list_container input[type="checkbox"]').prop('checked', true);
-        saveDisabledEntries();
+        saveEnabledEntries();
     });
 
     panel.on('click.qrf', '#qrf_worldbook_entry_deselect_all', () => {
         panel.find('#qrf_worldbook_entry_list_container input[type="checkbox"]').prop('checked', false);
-        saveDisabledEntries();
+        saveEnabledEntries();
     });
 }

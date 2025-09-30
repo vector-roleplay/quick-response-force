@@ -2,7 +2,7 @@
 // 由Cline移植并重构，核心功能来自Amily2号插件
 
 import { getContext, extension_settings } from '/scripts/extensions.js';
-import { characters, this_chid, getRequestHeaders, saveSettings } from '/script.js';
+import { characters, this_chid } from '/script.js';
 import { eventSource, event_types } from '/script.js';
 import { createDrawer } from './ui/drawer.js';
 import { callInterceptionApi } from './core/api.js';
@@ -67,75 +67,6 @@ function escapeRegExp(string) {
 }
 
 /**
- * [新增] 加载上次使用的预设到全局设置，并清除当前角色卡上冲突的陈旧设置。
- * 这是为了确保在切换角色或新开对话时，预设能够被正确应用，而不是被角色卡上的“幽灵数据”覆盖。
- */
-async function loadPresetAndCleanCharacterData() {
-    const settings = extension_settings[extension_name];
-    if (!settings) return;
-
-    const lastUsedPresetName = settings.lastUsedPresetName;
-    const presets = settings.promptPresets || [];
-
-    if (lastUsedPresetName && presets.length > 0) {
-        const presetToLoad = presets.find(p => p.name === lastUsedPresetName);
-        if (presetToLoad) {
-            console.log(`[${extension_name}] Applying last used preset: "${lastUsedPresetName}"`);
-            
-            // 步骤1: 将预设内容加载到全局设置中
-            Object.assign(settings.apiSettings, {
-                mainPrompt: presetToLoad.mainPrompt,
-                systemPrompt: presetToLoad.systemPrompt,
-                finalSystemDirective: presetToLoad.finalSystemDirective,
-                rateMain: presetToLoad.rateMain,
-                ratePersonal: presetToLoad.ratePersonal,
-                rateErotic: presetToLoad.rateErotic,
-                rateCuckold: presetToLoad.rateCuckold
-            });
-
-            // 步骤2: 清除当前角色卡上的陈旧提示词数据
-            const character = characters[this_chid];
-            if (character?.data?.extensions?.[extension_name]?.apiSettings) {
-                const charApiSettings = character.data.extensions[extension_name].apiSettings;
-                const keysToClear = ['mainPrompt', 'systemPrompt', 'finalSystemDirective', 'rateMain', 'ratePersonal', 'rateErotic', 'rateCuckold'];
-                let settingsCleared = false;
-                keysToClear.forEach(key => {
-                    if (charApiSettings[key] !== undefined) {
-                        delete charApiSettings[key];
-                        settingsCleared = true;
-                    }
-                });
-
-                if (settingsCleared) {
-                    console.log(`[${extension_name}] Cleared stale prompt data from character card to ensure preset is applied. Saving...`);
-                    // [最终修复] 必须等待保存操作完成，以避免竞争条件
-                    try {
-                        const response = await fetch('/api/characters/merge-attributes', {
-                            method: 'POST',
-                            headers: getRequestHeaders(),
-                            body: JSON.stringify({
-                                avatar: character.avatar,
-                                data: { extensions: { [extension_name]: { apiSettings: charApiSettings } } }
-                            })
-                        });
-                        if (!response.ok) {
-                            throw new Error(`API call failed with status: ${response.status}`);
-                        }
-                        console.log(`[${extension_name}] Character card updated successfully.`);
-                    } catch (error) {
-                        console.error(`[${extension_name}] Failed to clear stale character settings on chat change:`, error);
-                    }
-                }
-            }
-        }
-    }
-    
-    // [最终修复] 立即将加载了预设的全局设置保存到磁盘，防止在程序重载时被旧的磁盘数据覆盖。
-    saveSettings();
-    console.log(`[${extension_name}] Global settings persisted to disk after applying preset.`);
-}
-
-/**
  * [架构重构] 从聊天记录中反向查找最新的plot。
  * @returns {string} - 返回找到的plot文本，否则返回空字符串。
  */
@@ -165,10 +96,10 @@ async function savePlotToLatestMessage() {
         // 在SillyTavern的事件触发时，chat数组应该已经更新
         if (context.chat.length > 0) {
             const lastMessage = context.chat[context.chat.length - 1];
-            // 确保是AI消息，然后覆盖或附加plot数据
-            if (lastMessage && !lastMessage.is_user) {
+            // 确保是AI消息且没有被标记过，防止重复标记
+            if (lastMessage && !lastMessage.is_user && !lastMessage.qrf_plot) {
                 lastMessage.qrf_plot = tempPlotToSave;
-                console.log(`[${extension_name}] Plot data attached/overwritten on the latest AI message.`);
+                console.log(`[${extension_name}] Plot data attached to the latest AI message.`);
                 // SillyTavern should handle saving automatically after generation ends.
             }
         }
@@ -184,9 +115,6 @@ async function savePlotToLatestMessage() {
  * @returns {Promise<string|null>} - 返回优化后的完整消息体，如果失败或跳过则返回null。
  */
 async function runOptimizationLogic(userMessage) {
-    // [功能更新] 触发插件时，发射一个事件，以便UI可以按需刷新
-    eventSource.emit('qrf-plugin-triggered');
-
     let $toast = null;
     try {
         // 在每次执行前，都重新进行一次深度合并，以获取最新、最完整的设置状态
@@ -200,6 +128,38 @@ async function runOptimizationLogic(userMessage) {
             },
         };
 
+        const panel = $('#qrf_settings_panel');
+        if (panel.length > 0) {
+            settings.apiSettings.apiMode = panel.find('input[name="qrf_api_mode"]:checked').val();
+            settings.apiSettings.apiUrl = panel.find('#qrf_api_url').val();
+            settings.apiSettings.apiKey = panel.find('#qrf_api_key').val();
+            settings.apiSettings.model = panel.find('#qrf_model').val();
+            settings.apiSettings.tavernProfile = panel.find('#qrf_tavern_api_profile_select').val();
+            settings.minLength = parseInt(panel.find('#qrf_min_length').val(), 10) || 0;
+            // [新增] 实时从UI读取上下文轮数，确保设置能立即生效
+            settings.apiSettings.contextTurnCount = parseInt(panel.find('#qrf_context_turn_count').val(), 10) || 0;
+            
+            // [修复] 实时从UI读取提示词和速率设置，确保选择预设后立即生效
+            settings.apiSettings.mainPrompt = panel.find('#qrf_main_prompt').val();
+            settings.apiSettings.systemPrompt = panel.find('#qrf_system_prompt').val();
+            settings.apiSettings.finalSystemDirective = panel.find('#qrf_final_system_directive').val();
+            settings.apiSettings.rateMain = parseFloat(panel.find('#qrf_rate_main').val());
+            settings.apiSettings.ratePersonal = parseFloat(panel.find('#qrf_rate_personal').val());
+            settings.apiSettings.rateErotic = parseFloat(panel.find('#qrf_rate_erotic').val());
+            settings.apiSettings.rateCuckold = parseFloat(panel.find('#qrf_rate_cuckold').val());
+
+            // [核心修复] 实时从UI读取所有生成参数，确保所有模式都能使用最新值
+            settings.apiSettings.max_tokens = parseInt(panel.find('#qrf_max_tokens').val(), 10);
+            settings.apiSettings.temperature = parseFloat(panel.find('#qrf_temperature').val());
+            settings.apiSettings.top_p = parseFloat(panel.find('#qrf_top_p').val());
+            settings.apiSettings.presence_penalty = parseFloat(panel.find('#qrf_presence_penalty').val());
+            settings.apiSettings.frequency_penalty = parseFloat(panel.find('#qrf_frequency_penalty').val());
+
+            // [最终修复] 实时从UI读取世界书相关设置，完成所有参数的实时同步
+            settings.apiSettings.worldbookEnabled = panel.find('#qrf_worldbook_enabled').is(':checked');
+            settings.apiSettings.worldbookCharLimit = parseInt(panel.find('#qrf_worldbook_char_limit').val(), 10);
+        }
+
         if (!settings.enabled || (settings.apiSettings.apiMode !== 'tavern' && !settings.apiSettings.apiUrl)) {
             return null; // 插件未启用，直接返回
         }
@@ -209,27 +169,7 @@ async function runOptimizationLogic(userMessage) {
         const context = getContext();
         const character = characters[this_chid];
         const characterSettings = character?.data?.extensions?.[extension_name]?.apiSettings || {};
-        let apiSettings = { ...settings.apiSettings, ...characterSettings };
-
-        // [最终修复] 检查是否有激活的预设。如果有，则强制使用预设的提示词，覆盖任何来自角色卡的“幽灵数据”。
-        const lastUsedPresetName = settings.lastUsedPresetName;
-        const presets = settings.promptPresets || [];
-        if (lastUsedPresetName && presets.length > 0) {
-            const presetToApply = presets.find(p => p.name === lastUsedPresetName);
-            if (presetToApply) {
-                console.log(`[${extension_name}] Active preset "${lastUsedPresetName}" found. Forcing prompt override.`);
-                apiSettings = {
-                    ...apiSettings,
-                    mainPrompt: presetToApply.mainPrompt,
-                    systemPrompt: presetToApply.systemPrompt,
-                    finalSystemDirective: presetToApply.finalSystemDirective,
-                    rateMain: presetToApply.rateMain,
-                    ratePersonal: presetToApply.ratePersonal,
-                    rateErotic: presetToApply.rateErotic,
-                    rateCuckold: presetToApply.rateCuckold,
-                };
-            }
-        }
+        const apiSettings = { ...settings.apiSettings, ...characterSettings };
 
         const contextTurnCount = apiSettings.contextTurnCount ?? 1;
         let slicedContext = [];
@@ -341,71 +281,32 @@ async function runOptimizationLogic(userMessage) {
 
 
 async function onGenerationAfterCommands(type, params, dryRun) {
-    // 如果消息已被TavernHelper钩子处理，则跳过
-    if (params?._qrf_processed_by_hook) {
+    if (type === 'regenerate' || isProcessing || dryRun) {
         return;
     }
 
-    const settings = extension_settings[extension_name] || {};
-    if (type === 'regenerate' || isProcessing || dryRun || !settings.enabled) {
-        return;
-    }
-
-    const context = getContext();
-
-    // [策略1] 检查最新的聊天消息 (主要用于 /send 等命令，这些命令会先创建消息再触发生成)
-    if (context && context.chat && context.chat.length > 0) {
-        const lastMessageIndex = context.chat.length - 1;
-        const lastMessage = context.chat[lastMessageIndex];
-
-        // If the last message is a new user message, process it.
-        if (lastMessage && lastMessage.is_user && !lastMessage._qrf_processed) {
-            lastMessage._qrf_processed = true; // Prevent reprocessing
-
-            const messageToProcess = lastMessage.mes;
-            if (messageToProcess && messageToProcess.trim().length > 0) {
-                isProcessing = true;
-                try {
-                    const finalMessage = await runOptimizationLogic(messageToProcess);
-                    if (finalMessage) {
-                        params.prompt = finalMessage; // Inject into generation
-                        lastMessage.mes = finalMessage; // Update chat history
-                        
-                        // [UI修复] 发送消息更新事件以刷新UI
-                        eventSource.emit(event_types.MESSAGE_UPDATED, lastMessageIndex);
-                        
-                        // Clean the textarea if it contains the original text
-                        if ($('#send_textarea').val() === messageToProcess) {
-                            $('#send_textarea').val('');
-                            $('#send_textarea').trigger('input');
-                        }
-                    }
-                } catch (error) {
-                    console.error(`[${extension_name}] Error processing last chat message:`, error);
-                    delete lastMessage._qrf_processed; // Allow retry on error
-                } finally {
-                    isProcessing = false;
-                }
-                return; // Strategy 1 was successful, so we stop here.
-            }
-        }
-    }
-
-    // [策略2] 检查主输入框 (用于用户在UI中直接输入并点击发送)
+    // 仅处理来自主输入框的指令，脚本指令将由函数拦截器处理
     const textInBox = $('#send_textarea').val();
-    if (textInBox && textInBox.trim().length > 0) {
-        isProcessing = true;
-        try {
-            const finalMessage = await runOptimizationLogic(textInBox);
-            if (finalMessage) {
-                $('#send_textarea').val(finalMessage);
-                $('#send_textarea').trigger('input');
-            }
-        } catch (error) {
-            console.error(`[${extension_name}] Error processing textarea input:`, error);
-        } finally {
-            isProcessing = false;
+    if (!textInBox || textInBox.trim().length === 0) {
+        return;
+    }
+    
+    isProcessing = true;
+    try {
+        const finalMessage = await runOptimizationLogic(textInBox);
+
+        if (finalMessage) {
+            $('#send_textarea').val(finalMessage);
+            $('#send_textarea').trigger('input');
+        } else {
+            // 失败时恢复原始输入
+            $('#send_textarea').val(textInBox);
+            $('#send_textarea').trigger('input');
         }
+    } catch (error) {
+        console.error(`[${extension_name}] 处理 onGenerationAfterCommands 事件时出错:`, error);
+    } finally {
+        isProcessing = false;
     }
 }
 
@@ -455,75 +356,74 @@ jQuery(async () => {
         settings.minLength = 500;
     }
 
-    // 首次加载时，执行一次预设加载和数据清理
-    loadPresetAndCleanCharacterData();
-
     const intervalId = setInterval(async () => {
-        // 确保UI和TavernHelper都已加载
+        // [函数拦截] 确保 TavernHelper 可用后再执行拦截
         if ($('#extensions_settings').length > 0 && window.TavernHelper) {
             clearInterval(intervalId);
             try {
                 loadPluginStyles();
                 await createDrawer();
 
-                // [并行方案1] 恢复猴子补丁以拦截直接的JS调用
+                // 备份原始函数
                 if (!window.original_TavernHelper_generate) {
                     window.original_TavernHelper_generate = TavernHelper.generate;
                 }
+
+                // 创建并应用拦截器
                 TavernHelper.generate = async function(...args) {
                     const options = args[0] || {};
-                    const settings = extension_settings[extension_name] || {};
                     
+                    // 检查是否应该跳过优化：插件未启用、正在处理中、或这是一个流式请求
+                    const settings = extension_settings[extension_name] || {};
                     if (!settings.enabled || isProcessing || options.should_stream) {
                         return window.original_TavernHelper_generate.apply(this, args);
                     }
                     
-                    let userMessage = options.user_input || options.prompt;
-                    if (options.injects?.[0]?.content) {
-                        userMessage = options.injects[0].content;
+                    // [增强] 兼容不同调用方式，同时检查 injects (来自主UI) 和 user_input (来自扩展或脚本)
+                    let userMessage = options.injects?.[0]?.content;
+                    let isFromInjects = true;
+
+                    if (!userMessage && options.user_input) {
+                        userMessage = options.user_input;
+                        isFromInjects = false;
                     }
+
 
                     if (userMessage) {
                         isProcessing = true;
                         try {
                             const finalMessage = await runOptimizationLogic(userMessage);
                             if (finalMessage) {
-                                // 根据来源写回
-                                if (options.injects?.[0]?.content) {
+                                // 根据原始来源，将优化后的消息写回正确的位置
+                                if (isFromInjects) {
                                     options.injects[0].content = finalMessage;
-                                } else if (options.prompt) {
-                                    options.prompt = finalMessage;
                                 } else {
                                     options.user_input = finalMessage;
                                 }
-                                // 添加标志，防止 GENERATION_AFTER_COMMANDS 重复处理
-                                options._qrf_processed_by_hook = true;
                             }
+                            // 如果优化失败 (finalMessage is null)，则不修改参数，使用原始消息继续
                         } catch (error) {
-                            console.error(`[${extension_name}] Error in TavernHelper.generate hook:`, error);
+                            console.error(`[${extension_name}] 在拦截器中执行优化时出错:`, error);
                         } finally {
                             isProcessing = false;
                         }
                     }
 
+                    // 调用原始函数，传入可能已被修改的参数
                     return window.original_TavernHelper_generate.apply(this, args);
                 };
 
-
-                // [并行方案2] 注册事件监听器
+                // 注册传统的事件监听器，作为对主输入框操作的补充和保障
                 if (!window.qrfEventsRegistered) {
-                    // 核心拦截点：处理主输入框和 /send 命令
                     eventSource.on(event_types.GENERATION_AFTER_COMMANDS, onGenerationAfterCommands);
-                    
-                    // 辅助功能
+                    // [架构重构] 监听生成结束事件，以便将plot附加到新消息上
                     eventSource.on(event_types.GENERATION_ENDED, savePlotToLatestMessage);
-                    eventSource.on(event_types.CHAT_CHANGED, loadPresetAndCleanCharacterData);
-
                     window.qrfEventsRegistered = true;
-                    console.log(`[${extension_name}] Parallel event listeners registered.`);
                 }
+
             } catch (error) {
-                console.error(`[${extension_name}] Initialization failed:`, error);
+                console.error(`[${extension_name}] 初始化或函数拦截过程中发生严重错误:`, error);
+                // 如果拦截失败，尝试恢复原始函数
                 if (window.original_TavernHelper_generate) {
                     TavernHelper.generate = window.original_TavernHelper_generate;
                 }

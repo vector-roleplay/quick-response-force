@@ -452,7 +452,7 @@ jQuery(async () => {
 
     // 确保新增的顶层设置有默认值
     if (settings.minLength === undefined) {
-        settings.minLength = 500;
+        settings.minLength = 0;
     }
 
     // 首次加载时，执行一次预设加载和数据清理

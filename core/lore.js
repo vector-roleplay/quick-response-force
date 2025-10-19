@@ -1,6 +1,8 @@
 // 快速响应部队 - 世界书处理模块
 // 由Cline移植并重构，核心功能来自Amily2号插件
 
+import { safeCharLorebooks, safeLorebookEntries } from './tavernhelper-compatibility.js';
+
 /**
  * 提取并合并当前角色所有关联世界书的内容，并根据新的、支持递归的筛选逻辑进行处理。
  * 
@@ -16,8 +18,8 @@ export async function getCombinedWorldbookContent(context, apiSettings) {
         return '';
     }
 
-    if (!window.TavernHelper?.getLorebookEntries || !context) {
-        console.warn('[剧情优化大师] TavernHelper API 或 context 未提供，无法获取世界书内容。');
+    if (!context) {
+        console.warn('[剧情优化大师] Context 未提供，无法获取世界书内容。');
         return '';
     }
 
@@ -28,7 +30,7 @@ export async function getCombinedWorldbookContent(context, apiSettings) {
             bookNames = apiSettings.selectedWorldbooks || [];
             if (bookNames.length === 0) return '';
         } else {
-            const charLorebooks = await window.TavernHelper.getCharLorebooks({ type: 'all' });
+            const charLorebooks = await safeCharLorebooks({ type: 'all' });
             if (charLorebooks.primary) bookNames.push(charLorebooks.primary);
             if (charLorebooks.additional?.length) bookNames.push(...charLorebooks.additional);
             if (bookNames.length === 0) return '';
@@ -37,7 +39,7 @@ export async function getCombinedWorldbookContent(context, apiSettings) {
         let allEntries = [];
         for (const bookName of bookNames) {
             if (bookName) {
-                const entries = await window.TavernHelper.getLorebookEntries(bookName);
+                const entries = await safeLorebookEntries(bookName);
                 if (entries?.length) {
                     entries.forEach(entry => allEntries.push({ ...entry, bookName }));
                 }

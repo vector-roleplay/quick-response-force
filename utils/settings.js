@@ -30,6 +30,7 @@ export const defaultSettings = {
         presencePenalty: 1,
         frequencyPenalty: 1,
         contextTurnCount: 3,
+        extractTags: '', // [新功能] 标签摘取
         worldbookEnabled: true,
         worldbookSource: 'character', // 'character' or 'manual'
         worldbookCharLimit: 60000,

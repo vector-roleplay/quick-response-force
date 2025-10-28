@@ -492,7 +492,11 @@ function saveAsNewPreset(panel) {
         rateMain: parseFloat(panel.find('#qrf_rate_main').val()),
         ratePersonal: parseFloat(panel.find('#qrf_rate_personal').val()),
         rateErotic: parseFloat(panel.find('#qrf_rate_erotic').val()),
-        rateCuckold: parseFloat(panel.find('#qrf_rate_cuckold').val())
+        rateCuckold: parseFloat(panel.find('#qrf_rate_cuckold').val()),
+        // [新功能] 导出时包含新增的设置
+        extractTags: panel.find('#qrf_extract_tags').val(),
+        minLength: parseInt(panel.find('#qrf_min_length').val(), 10),
+        contextTurnCount: parseInt(panel.find('#qrf_context_turn_count').val(), 10)
     };
 
     if (existingPresetIndex !== -1) {
@@ -551,7 +555,11 @@ function overwriteSelectedPreset(panel) {
         rateMain: parseFloat(panel.find('#qrf_rate_main').val()),
         ratePersonal: parseFloat(panel.find('#qrf_rate_personal').val()),
         rateErotic: parseFloat(panel.find('#qrf_rate_erotic').val()),
-        rateCuckold: parseFloat(panel.find('#qrf_rate_cuckold').val())
+        rateCuckold: parseFloat(panel.find('#qrf_rate_cuckold').val()),
+        // [新功能] 覆盖时包含新增的设置
+        extractTags: panel.find('#qrf_extract_tags').val(),
+        minLength: parseInt(panel.find('#qrf_min_length').val(), 10),
+        contextTurnCount: parseInt(panel.find('#qrf_context_turn_count').val(), 10)
     };
 
     presets[existingPresetIndex] = updatedPresetData;
@@ -663,7 +671,11 @@ function importPromptPresets(file, panel) {
                         rateMain: preset.rateMain ?? 1.0,
                         ratePersonal: preset.ratePersonal ?? 1.0,
                         rateErotic: preset.rateErotic ?? 1.0,
-                        rateCuckold: preset.rateCuckold ?? 1.0
+                        rateCuckold: preset.rateCuckold ?? 1.0,
+                        // [新功能] 导入时识别新设置，并提供默认值以兼容旧预设
+                        extractTags: preset.extractTags || '',
+                        minLength: preset.minLength ?? defaultSettings.minLength,
+                        contextTurnCount: preset.contextTurnCount ?? defaultSettings.apiSettings.contextTurnCount
                     };
 
                     const existingIndex = currentPresets.findIndex(p => p.name === preset.name);
@@ -749,6 +761,9 @@ function loadSettings(panel) {
     panel.find('#qrf_frequency_penalty').val(apiSettings.frequencyPenalty);
     panel.find('#qrf_context_turn_count').val(apiSettings.contextTurnCount);
     panel.find('#qrf_worldbook_char_limit').val(apiSettings.worldbookCharLimit);
+
+    // 加载标签摘取设置
+    panel.find('#qrf_extract_tags').val(apiSettings.extractTags || '');
 
     // 加载匹配替换速率
     panel.find('#qrf_rate_main').val(apiSettings.rateMain);
@@ -987,7 +1002,11 @@ export function initializeBindings() {
                 rateMain: selectedPreset.rateMain ?? 1.0,
                 ratePersonal: selectedPreset.ratePersonal ?? 1.0,
                 rateErotic: selectedPreset.rateErotic ?? 1.0,
-                rateCuckold: selectedPreset.rateCuckold ?? 1.0
+                rateCuckold: selectedPreset.rateCuckold ?? 1.0,
+                 // [新功能] 加载预设时应用新设置
+                extractTags: selectedPreset.extractTags || '',
+                minLength: selectedPreset.minLength ?? defaultSettings.minLength,
+                contextTurnCount: selectedPreset.contextTurnCount ?? defaultSettings.apiSettings.contextTurnCount
             };
 
             // 1. 更新UI界面
@@ -998,6 +1017,9 @@ export function initializeBindings() {
             panel.find('#qrf_rate_personal').val(presetData.ratePersonal);
             panel.find('#qrf_rate_erotic').val(presetData.rateErotic);
             panel.find('#qrf_rate_cuckold').val(presetData.rateCuckold);
+            panel.find('#qrf_extract_tags').val(presetData.extractTags);
+            panel.find('#qrf_min_length').val(presetData.minLength);
+            panel.find('#qrf_context_turn_count').val(presetData.contextTurnCount);
 
             // 2. 直接、同步地覆盖apiSettings中的内容
             // saveSetting现在是异步的，我们需要等待它完成

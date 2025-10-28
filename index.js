@@ -313,11 +313,41 @@ async function runOptimizationLogic(userMessage) {
         }
 
         if (processedMessage) {
-            // [架构重构] 将本次优化结果暂存，等待附加到新消息上
+            // [架构重构] 将本次优化结果暂存（保存完整回复）
             tempPlotToSave = processedMessage;
 
+            // [新功能] 标签摘取逻辑
+            let messageForTavern = processedMessage; // 默认使用完整回复
+            const tagsToExtract = (finalApiSettings.extractTags || '').trim();
+
+            if (tagsToExtract) {
+                const tagNames = tagsToExtract.split(',').map(t => t.trim()).filter(t => t);
+                if (tagNames.length > 0) {
+                    const extractedParts = [];
+                    
+                    tagNames.forEach(tagName => {
+                        const safeTagName = escapeRegExp(tagName);
+                        const regex = new RegExp(`<${safeTagName}>([\\s\\S]*?)<\\/${safeTagName}>`, 'gi');
+                        const matches = processedMessage.match(regex);
+                        if (matches) {
+                            extractedParts.push(...matches);
+                        }
+                    });
+
+                    if (extractedParts.length > 0) {
+                        messageForTavern = extractedParts.join('\n\n');
+                        console.log(`[${extension_name}] 成功摘取标签: ${tagNames.join(', ')}`);
+                        toastr.info(`已成功摘取 [${tagNames.join(', ')}] 标签内容并注入。`, '标签摘取');
+                    } else {
+                        console.log(`[${extension_name}] 在回复中未找到指定标签: ${tagNames.join(', ')}`);
+                    }
+                }
+            }
+
             const finalSystemDirective = finalApiSettings.finalSystemDirective || '[SYSTEM_DIRECTIVE: You are a storyteller. The following <plot> block is your absolute script for this turn. You MUST follow the <directive> within it to generate the story.]';
-            const finalMessage = `${userMessage}\n\n${finalSystemDirective}\n${processedMessage}`;
+            // 使用可能被处理过的 messageForTavern 构建最终消息
+            const finalMessage = `${userMessage}\n\n${finalSystemDirective}\n${messageForTavern}`;
+            
             if ($toast) toastr.clear($toast);
             if (minLength <= 0) {
                 toastr.success('剧情规划大师已完成规划。', '规划成功');

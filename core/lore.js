@@ -54,9 +54,9 @@ export async function getCombinedWorldbookContent(context, apiSettings) {
             // 首先，条目本身必须在SillyTavern中是启用的
             if (!entry.enabled) return false;
             
-            // 其次，它不能出现在我们的禁用列表中
-            const isDisabled = disabledEntriesMap[entry.bookName]?.includes(entry.uid);
-            return !isDisabled;
+            // 只有在黑名单中的条目才被启用
+    const isInBlacklist = disabledEntriesMap[entry.bookName]?.includes(entry.uid);
+    return isInBlacklist;
         });
 
         if (userEnabledEntries.length === 0) return '';
